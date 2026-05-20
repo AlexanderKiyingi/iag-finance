@@ -1,0 +1,9 @@
+# Prefer platform compose: pnpm infra:up (deploy/docker-compose.yml includes finance).
+# This file runs only the API image against an existing DATABASE_URL / REDIS_URL.
+services:
+  api:
+    build: .
+    ports:
+      - "3006:3006"
+    env_file:
+      - config/.env.example
