@@ -4,9 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"log/slog"
-	"time"
 
-	"github.com/segmentio/kafka-go"
+	platformevents "github.com/alvor-technologies/iag-platform-go/events"
 	"github.com/shopspring/decimal"
 
 	"github.com/iag-finance/backend/internal/auditlog"
@@ -14,21 +13,70 @@ import (
 	"github.com/iag-finance/backend/internal/ledger"
 )
 
+// Config controls one Kafka subscription.
 type Config struct {
 	Brokers []string
 	GroupID string
 	Topic   string
+	// DLQTopic receives messages whose handler returned a Permanent error or
+	// exceeded retries. Empty disables DLQ.
+	DLQTopic string
 }
 
-type PlatformEvent struct {
-	ID            string          `json:"id"`
-	Type          string          `json:"type"`
-	Time          string          `json:"time"`
-	Source        string          `json:"source"`
-	SpecVersion   string          `json:"specversion"`
-	CorrelationID string          `json:"correlationId"`
-	CausationID   string          `json:"causationId"`
-	Data          json.RawMessage `json:"data"`
+// Consumer wraps a platform-go events.Consumer with finance-specific handlers.
+// Dedupe stays inside ledger.BookFromEvent (IsEventProcessed/MarkEventProcessed
+// against the existing finance processed_events table), so the platform-go
+// consumer uses NoopDedupe — DLQ + retry come from platform-go, idempotency
+// comes from the ledger.
+type Consumer struct {
+	inner *platformevents.Consumer
+}
+
+// New builds a Consumer that publishes its DLQ via the supplied producer (may
+// be nil to disable DLQ).
+func New(cfg Config, ledgerSvc *ledger.Service, auditSvc *auditlog.Service, dlq *platformevents.Producer) (*Consumer, error) {
+	h := &financeHandler{ledger: ledgerSvc, audit: auditSvc}
+	inner, err := platformevents.NewConsumer(platformevents.ConsumerConfig{
+		Brokers:     cfg.Brokers,
+		Topic:       cfg.Topic,
+		GroupID:     cfg.GroupID,
+		Handler:     h,
+		Dedupe:      platformevents.NoopDedupe{},
+		DLQProducer: dlq,
+		DLQTopic:    cfg.DLQTopic,
+	})
+	if err != nil {
+		return nil, err
+	}
+	return &Consumer{inner: inner}, nil
+}
+
+// Run blocks consuming until ctx is cancelled.
+func (c *Consumer) Run(ctx context.Context) error { return c.inner.Run(ctx) }
+
+// Close shuts down the underlying reader.
+func (c *Consumer) Close() error { return c.inner.Close() }
+
+// financeHandler dispatches on event type. Unknown types are ignored (return
+// nil); decode failures are returned as Permanent so the message goes to DLQ
+// instead of looping.
+type financeHandler struct {
+	ledger *ledger.Service
+	audit  *auditlog.Service
+}
+
+func (h *financeHandler) Handle(ctx context.Context, env platformevents.Envelope) error {
+	switch env.Type {
+	case "sale.completed":
+		return h.handleSaleCompleted(ctx, env)
+	case "invoice.posted":
+		return h.handleInvoicePosted(ctx, env)
+	case "fleet.fuel.recorded":
+		return h.handleFleetFuelRecorded(ctx, env)
+	default:
+		slog.Debug("finance ignoring event", "type", env.Type, "topic_envelope_source", env.Source)
+		return nil
+	}
 }
 
 type saleCompletedData struct {
@@ -54,139 +102,61 @@ type fleetFuelRecordedData struct {
 	Litres      string `json:"litres"`
 }
 
-type Consumer struct {
-	reader  *kafka.Reader
-	ledger  *ledger.Service
-	audit   *auditlog.Service
-}
-
-func New(cfg Config, ledgerSvc *ledger.Service, auditSvc *auditlog.Service) *Consumer {
-	reader := kafka.NewReader(kafka.ReaderConfig{
-		Brokers:  cfg.Brokers,
-		GroupID:  cfg.GroupID,
-		Topic:    cfg.Topic,
-		MinBytes: 1,
-		MaxBytes: 10e6,
-	})
-	return &Consumer{reader: reader, ledger: ledgerSvc, audit: auditSvc}
-}
-
-func (c *Consumer) Run(ctx context.Context) error {
-	slog.Info("finance consumer started", "topic", c.reader.Config().Topic)
-	for {
-		msg, err := c.reader.FetchMessage(ctx)
-		if err != nil {
-			if ctx.Err() != nil {
-				return nil
-			}
-			slog.Error("kafka fetch", "error", err)
-			time.Sleep(time.Second)
-			continue
-		}
-
-		if err := c.handleMessage(ctx, msg.Value); err != nil {
-			slog.Error("handle finance event", "error", err)
-		} else if err := c.reader.CommitMessages(ctx, msg); err != nil {
-			slog.Error("kafka commit", "error", err)
-		}
-	}
-}
-
-func (c *Consumer) Close() error {
-	return c.reader.Close()
-}
-
-func (c *Consumer) handleMessage(ctx context.Context, payload []byte) error {
-	var evt PlatformEvent
-	if err := json.Unmarshal(payload, &evt); err != nil {
-		return err
-	}
-	if evt.ID == "" || evt.Type == "" {
-		return nil
-	}
-
-	switch evt.Type {
-	case "sale.completed":
-		return c.handleSaleCompleted(ctx, evt)
-	case "invoice.posted":
-		return c.handleInvoicePosted(ctx, evt)
-	case "fleet.fuel.recorded":
-		return c.handleFleetFuelRecorded(ctx, evt)
-	default:
-		slog.Debug("ignored finance event", "type", evt.Type)
-		return nil
-	}
-}
-
-func (c *Consumer) handleSaleCompleted(ctx context.Context, evt PlatformEvent) error {
+func (h *financeHandler) handleSaleCompleted(ctx context.Context, env platformevents.Envelope) error {
 	var data saleCompletedData
-	if err := json.Unmarshal(evt.Data, &data); err != nil {
-		return err
+	if err := remarshal(env.Data, &data); err != nil {
+		return platformevents.Permanent(err)
 	}
-	amount, err := decimal.NewFromString(data.Amount)
-	if err != nil || amount.LessThanOrEqual(decimal.Zero) {
-		amount = decimal.NewFromInt(0)
-	}
+	amount := parseAmount(data.Amount)
 	if amount.IsZero() {
 		return nil
 	}
-
 	desc := "Sale completed"
 	if data.DocumentRef != "" {
 		desc += " — " + data.DocumentRef
 	}
-
-	entry, err := c.ledger.BookFromEvent(ctx, evt.ID, evt.Type, evt.Source, evt.CorrelationID, desc, []ledger.LineInput{
+	entry, err := h.ledger.BookFromEvent(ctx, env.ID, env.Type, env.Source, env.CorrelationID, desc, []ledger.LineInput{
 		{AccountCode: "1100", Debit: amount, Memo: "AR from sale"},
 		{AccountCode: "4000", Credit: amount, Memo: "Revenue"},
 	})
 	if err == nil {
-		c.logBookedEvent(ctx, evt, entry)
+		h.logBooked(ctx, env, entry)
 	}
 	return err
 }
 
-func (c *Consumer) handleInvoicePosted(ctx context.Context, evt PlatformEvent) error {
+func (h *financeHandler) handleInvoicePosted(ctx context.Context, env platformevents.Envelope) error {
 	var data invoicePostedData
-	if err := json.Unmarshal(evt.Data, &data); err != nil {
-		return err
+	if err := remarshal(env.Data, &data); err != nil {
+		return platformevents.Permanent(err)
 	}
-	amount, err := decimal.NewFromString(data.Amount)
-	if err != nil || amount.LessThanOrEqual(decimal.Zero) {
-		amount = decimal.NewFromInt(0)
-	}
+	amount := parseAmount(data.Amount)
 	if amount.IsZero() {
 		return nil
 	}
-
 	desc := "Invoice posted"
 	if data.DocumentRef != "" {
 		desc += " — " + data.DocumentRef
 	}
-
-	entry, err := c.ledger.BookFromEvent(ctx, evt.ID, evt.Type, evt.Source, evt.CorrelationID, desc, []ledger.LineInput{
+	entry, err := h.ledger.BookFromEvent(ctx, env.ID, env.Type, env.Source, env.CorrelationID, desc, []ledger.LineInput{
 		{AccountCode: "5000", Debit: amount, Memo: "Expense / COGS"},
 		{AccountCode: "2000", Credit: amount, Memo: "AP liability"},
 	})
 	if err == nil {
-		c.logBookedEvent(ctx, evt, entry)
+		h.logBooked(ctx, env, entry)
 	}
 	return err
 }
 
-func (c *Consumer) handleFleetFuelRecorded(ctx context.Context, evt PlatformEvent) error {
+func (h *financeHandler) handleFleetFuelRecorded(ctx context.Context, env platformevents.Envelope) error {
 	var data fleetFuelRecordedData
-	if err := json.Unmarshal(evt.Data, &data); err != nil {
-		return err
+	if err := remarshal(env.Data, &data); err != nil {
+		return platformevents.Permanent(err)
 	}
-	amount, err := decimal.NewFromString(data.Amount)
-	if err != nil || amount.LessThanOrEqual(decimal.Zero) {
-		amount = decimal.NewFromInt(0)
-	}
+	amount := parseAmount(data.Amount)
 	if amount.IsZero() {
 		return nil
 	}
-
 	desc := "Fleet fuel purchase"
 	if data.DocumentRef != "" {
 		desc += " — " + data.DocumentRef
@@ -194,32 +164,50 @@ func (c *Consumer) handleFleetFuelRecorded(ctx context.Context, evt PlatformEven
 	if data.VehicleID != "" {
 		desc += " (" + data.VehicleID + ")"
 	}
-
-	entry, err := c.ledger.BookFromEvent(ctx, evt.ID, evt.Type, evt.Source, evt.CorrelationID, desc, []ledger.LineInput{
+	entry, err := h.ledger.BookFromEvent(ctx, env.ID, env.Type, env.Source, env.CorrelationID, desc, []ledger.LineInput{
 		{AccountCode: "5000", Debit: amount, Memo: "Fleet fuel expense"},
 		{AccountCode: "2000", Credit: amount, Memo: "AP / fuel payable"},
 	})
 	if err == nil {
-		c.logBookedEvent(ctx, evt, entry)
+		h.logBooked(ctx, env, entry)
 	}
 	return err
 }
 
-func (c *Consumer) logBookedEvent(ctx context.Context, evt PlatformEvent, entry *domain.JournalEntry) {
-	if c.audit == nil || entry == nil {
+func (h *financeHandler) logBooked(ctx context.Context, env platformevents.Envelope, entry *domain.JournalEntry) {
+	if h.audit == nil || entry == nil {
 		return
 	}
-	_ = c.audit.Record(ctx, auditlog.RecordInput{
-		EventType:    auditlog.EventJournalBookedEvent,
-		ActorEmail:   "system",
-		ResourceType: "journal_entry",
-		ResourceID:   entry.ID.String(),
-		CorrelationID: evt.CorrelationID,
+	_ = h.audit.Record(ctx, auditlog.RecordInput{
+		EventType:     auditlog.EventJournalBookedEvent,
+		ActorEmail:    "system",
+		ResourceType:  "journal_entry",
+		ResourceID:    entry.ID.String(),
+		CorrelationID: env.CorrelationID,
 		Metadata: map[string]any{
-			"sourceEventId":   evt.ID,
-			"sourceEventType": evt.Type,
-			"sourceService":   evt.Source,
+			"sourceEventId":   env.ID,
+			"sourceEventType": env.Type,
+			"sourceService":   env.Source,
 			"entryNumber":     entry.EntryNumber,
 		},
 	})
+}
+
+// remarshal turns the generic map[string]any in env.Data into a typed struct.
+// platform-go's Envelope holds Data as map[string]any (JSON decoded once);
+// the original consumer worked off raw bytes, so we round-trip via JSON.
+func remarshal(in map[string]any, out any) error {
+	raw, err := json.Marshal(in)
+	if err != nil {
+		return err
+	}
+	return json.Unmarshal(raw, out)
+}
+
+func parseAmount(s string) decimal.Decimal {
+	d, err := decimal.NewFromString(s)
+	if err != nil || d.LessThanOrEqual(decimal.Zero) {
+		return decimal.NewFromInt(0)
+	}
+	return d
 }

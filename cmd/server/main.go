@@ -12,12 +12,16 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/redis/go-redis/v9"
+
+	platformevents "github.com/alvor-technologies/iag-platform-go/events"
+	platformotel "github.com/alvor-technologies/iag-platform-go/otel"
+
 	"github.com/iag-finance/backend/internal/api"
 	"github.com/iag-finance/backend/internal/authclient"
 	"github.com/iag-finance/backend/internal/config"
 	"github.com/iag-finance/backend/internal/consumer"
 	"github.com/iag-finance/backend/internal/db"
-	"github.com/redis/go-redis/v9"
 )
 
 func main() {
@@ -27,7 +31,22 @@ func main() {
 	}
 	gin.SetMode(cfg.GinMode())
 
-	ctx := context.Background()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	tp, err := platformotel.Init(ctx, platformotel.Config{
+		ServiceName: cfg.ServiceName,
+		Environment: cfg.Environment,
+	})
+	if err != nil {
+		slog.Warn("otel disabled", "error", err)
+	} else {
+		defer func() {
+			sc, c := context.WithTimeout(context.Background(), 5*time.Second)
+			defer c()
+			_ = tp.Shutdown(sc)
+		}()
+	}
 
 	pool, err := db.Connect(ctx, cfg.DatabaseURL)
 	if err != nil {
@@ -70,15 +89,12 @@ func main() {
 		}
 	}
 
-	var verifier *authclient.Verifier
-	if cfg.AuthMode == "jwt" {
-		verifier = authclient.NewVerifier(cfg.JWKSURL, cfg.JWTIssuer)
-		if err := verifier.Refresh(ctx); err != nil {
-			slog.Warn("jwks refresh failed", "error", err)
-		} else {
-			go jwksRefreshLoop(verifier)
-		}
+	// Inbound verifier — every request must carry aud=cfg.Audience.
+	verifier := authclient.NewVerifier(cfg.JWKSURL, cfg.JWTIssuer, cfg.Audience)
+	if err := verifier.Refresh(ctx); err != nil {
+		slog.Warn("jwks refresh failed", "error", err)
 	}
+	verifier.StartRefreshLoop(ctx, 15*time.Minute)
 
 	router := api.NewRouter(api.RouterDeps{
 		Config:   cfg,
@@ -89,18 +105,53 @@ func main() {
 		AuditLog: auditSvc,
 	})
 
-	var financeConsumer *consumer.Consumer
+	// Shared producer used for the DLQ. Re-used by both the iag.finance and
+	// iag.fleet consumers below so we don't carry two Kafka writer fleets.
+	var dlqProducer *platformevents.Producer
+	if cfg.EnableConsumer && len(cfg.KafkaBrokers) > 0 {
+		dlqProducer = platformevents.NewProducer(platformevents.ProducerConfig{
+			Brokers:  cfg.KafkaBrokers,
+			ClientID: cfg.KafkaClientID,
+		})
+		defer func() { _ = dlqProducer.Close() }()
+	}
+
+	var consumers []*consumer.Consumer
 	if cfg.EnableConsumer {
-		financeConsumer = consumer.New(consumer.Config{
-			Brokers: cfg.KafkaBrokers,
-			GroupID: cfg.KafkaGroupID,
-			Topic:   cfg.KafkaTopic,
-		}, ledgerSvc, auditSvc)
-		go func() {
-			if err := financeConsumer.Run(ctx); err != nil {
-				slog.Error("finance consumer stopped", "error", err)
-			}
-		}()
+		// Primary: iag.finance — accounting events (sale.completed, invoice.posted).
+		c1, err := consumer.New(consumer.Config{
+			Brokers:  cfg.KafkaBrokers,
+			GroupID:  cfg.KafkaGroupID,
+			Topic:    cfg.KafkaTopic,
+			DLQTopic: cfg.KafkaDLQTopic,
+		}, ledgerSvc, auditSvc, dlqProducer)
+		if err != nil {
+			log.Fatal("finance consumer: ", err)
+		}
+		consumers = append(consumers, c1)
+
+		// Secondary: iag.fleet — fleet.fuel.recorded (and any future fleet
+		// events that finance cares about). Distinct consumer group so the two
+		// streams advance independently.
+		c2, err := consumer.New(consumer.Config{
+			Brokers:  cfg.KafkaBrokers,
+			GroupID:  "iag.finance.fleet",
+			Topic:    "iag.fleet",
+			DLQTopic: cfg.KafkaDLQTopic,
+		}, ledgerSvc, auditSvc, dlqProducer)
+		if err != nil {
+			log.Fatal("finance fleet consumer: ", err)
+		}
+		consumers = append(consumers, c2)
+
+		for _, c := range consumers {
+			c := c
+			go func() {
+				if err := c.Run(ctx); err != nil {
+					slog.Error("finance consumer stopped", "error", err)
+				}
+			}()
+		}
 	}
 
 	srv := &http.Server{
@@ -113,7 +164,7 @@ func main() {
 		slog.Info("finance service listening",
 			"environment", cfg.Environment,
 			"port", cfg.Port,
-			"auth_mode", cfg.AuthMode,
+			"audience", cfg.Audience,
 			"consumer", cfg.EnableConsumer,
 		)
 		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
@@ -125,25 +176,15 @@ func main() {
 	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
 	<-quit
 
-	shutdownCtx, cancel := context.WithTimeout(context.Background(), cfg.ShutdownTimeout)
-	defer cancel()
-	if financeConsumer != nil {
-		_ = financeConsumer.Close()
+	shutdownCtx, c := context.WithTimeout(context.Background(), cfg.ShutdownTimeout)
+	defer c()
+	for _, cn := range consumers {
+		_ = cn.Close()
 	}
 	if err := srv.Shutdown(shutdownCtx); err != nil {
 		slog.Warn("shutdown", "error", err)
 	}
 	if rdb != nil {
 		_ = rdb.Close()
-	}
-}
-
-func jwksRefreshLoop(v *authclient.Verifier) {
-	ticker := time.NewTicker(15 * time.Minute)
-	defer ticker.Stop()
-	for range ticker.C {
-		if err := v.Refresh(context.Background()); err != nil {
-			slog.Warn("jwks refresh", "error", err)
-		}
 	}
 }

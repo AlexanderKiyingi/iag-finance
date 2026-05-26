@@ -8,6 +8,7 @@ import (
 	"time"
 )
 
+// Config holds runtime knobs for the finance service.
 type Config struct {
 	ServiceName       string
 	Environment       string
@@ -16,9 +17,8 @@ type Config struct {
 	RedisURL          string
 	JWTIssuer         string
 	JWKSURL           string
+	Audience          string // backends MUST reject tokens lacking this aud
 	LogLevel          string
-	AuthMode          string
-	GatewaySecret     string
 	SeedOnStartup     bool
 	AutoMigrate       bool
 	CORSAllowOrigins  []string
@@ -27,10 +27,19 @@ type Config struct {
 	KafkaClientID     string
 	KafkaGroupID      string
 	KafkaTopic        string
+	KafkaDLQTopic     string
 	ShutdownTimeout   time.Duration
 	ReadHeaderTimeout time.Duration
+
+	// Outbound service-account credentials.
+	ServiceClientID     string
+	ServiceClientSecret string
+	AuthTokenURL        string
 }
 
+// Load reads configuration from env. Hard cutover: no AUTH_MODE, no
+// GATEWAY_INTERNAL_SECRET — every inbound request must carry a verifiable
+// Bearer with aud=Audience.
 func Load() (Config, error) {
 	loadDotEnv()
 
@@ -52,11 +61,6 @@ func Load() (Config, error) {
 	issuer := getEnv("JWT_ISSUER", "http://localhost:3001")
 	jwksURL := getEnv("JWKS_URL", strings.TrimRight(issuer, "/")+"/.well-known/jwks.json")
 
-	authMode := getEnv("AUTH_MODE", defaultAuthMode(env))
-	if authMode != "gateway" && authMode != "jwt" {
-		return Config{}, fmt.Errorf("AUTH_MODE must be gateway or jwt")
-	}
-
 	seedDefault := "true"
 	if env == "production" {
 		seedDefault = "false"
@@ -76,52 +80,50 @@ func Load() (Config, error) {
 	}
 
 	cfg := Config{
-		ServiceName:       getEnv("SERVICE_NAME", "finance"),
-		Environment:       env,
-		Port:              port,
-		DatabaseURL:       dbURL,
-		RedisURL:          strings.TrimSpace(os.Getenv("REDIS_URL")),
-		JWTIssuer:         issuer,
-		JWKSURL:           jwksURL,
-		LogLevel:          getEnv("LOG_LEVEL", "info"),
-		AuthMode:          authMode,
-		GatewaySecret:     os.Getenv("GATEWAY_INTERNAL_SECRET"),
-		SeedOnStartup:     getEnv("SEED_ON_STARTUP", seedDefault) == "true",
-		AutoMigrate:       getEnv("AUTO_MIGRATE", "true") != "false",
-		CORSAllowOrigins:  corsOrigins,
-		EnableConsumer:    getEnv("ENABLE_CONSUMER", defaultConsumer(env)) == "true",
-		KafkaBrokers:      splitBrokers(getEnv("KAFKA_BROKERS", "localhost:19092")),
-		KafkaClientID:     getEnv("KAFKA_CLIENT_ID", "finance"),
-		KafkaGroupID:      getEnv("KAFKA_GROUP_ID", "iag.finance.ledger"),
-		KafkaTopic:        getEnv("KAFKA_FINANCE_TOPIC", "iag.finance"),
-		ShutdownTimeout:   time.Duration(shutdownSec) * time.Second,
-		ReadHeaderTimeout: 10 * time.Second,
+		ServiceName:         getEnv("SERVICE_NAME", "finance"),
+		Environment:         env,
+		Port:                port,
+		DatabaseURL:         dbURL,
+		RedisURL:            strings.TrimSpace(os.Getenv("REDIS_URL")),
+		JWTIssuer:           issuer,
+		JWKSURL:             jwksURL,
+		Audience:            getEnv("AUDIENCE", "iag.finance"),
+		LogLevel:            getEnv("LOG_LEVEL", "info"),
+		SeedOnStartup:       getEnv("SEED_ON_STARTUP", seedDefault) == "true",
+		AutoMigrate:         getEnv("AUTO_MIGRATE", "true") != "false",
+		CORSAllowOrigins:    corsOrigins,
+		EnableConsumer:      getEnv("ENABLE_CONSUMER", defaultConsumer(env)) == "true",
+		KafkaBrokers:        splitBrokers(getEnv("KAFKA_BROKERS", "localhost:19092")),
+		KafkaClientID:       getEnv("KAFKA_CLIENT_ID", "finance"),
+		KafkaGroupID:        getEnv("KAFKA_GROUP_ID", "iag.finance.ledger"),
+		KafkaTopic:          getEnv("KAFKA_FINANCE_TOPIC", "iag.finance"),
+		KafkaDLQTopic:       getEnv("KAFKA_DLQ_TOPIC", "iag.finance.dlq"),
+		ShutdownTimeout:     time.Duration(shutdownSec) * time.Second,
+		ReadHeaderTimeout:   10 * time.Second,
+		ServiceClientID:     getEnv("SERVICE_CLIENT_ID", "iag-finance"),
+		ServiceClientSecret: os.Getenv("SERVICE_CLIENT_SECRET"),
+		AuthTokenURL:        getEnv("AUTH_TOKEN_URL", strings.TrimRight(issuer, "/")+"/oauth/token"),
 	}
 
 	return cfg, cfg.validate()
 }
 
 func (c Config) validate() error {
+	if c.Audience == "" {
+		return fmt.Errorf("AUDIENCE is required (e.g. iag.finance)")
+	}
 	if c.Environment == "production" {
-		if c.AuthMode != "gateway" {
-			return fmt.Errorf("production requires AUTH_MODE=gateway")
-		}
-		if c.GatewaySecret == "" {
-			return fmt.Errorf("production requires GATEWAY_INTERNAL_SECRET")
-		}
-		if len(c.GatewaySecret) < 16 {
-			return fmt.Errorf("GATEWAY_INTERNAL_SECRET must be at least 16 characters in production")
-		}
 		if c.SeedOnStartup {
 			return fmt.Errorf("production must not enable SEED_ON_STARTUP")
 		}
-	}
-	if c.AuthMode == "gateway" && c.GatewaySecret == "" {
-		return fmt.Errorf("AUTH_MODE=gateway requires GATEWAY_INTERNAL_SECRET")
+		if c.ServiceClientSecret == "" {
+			return fmt.Errorf("SERVICE_CLIENT_SECRET is required in production")
+		}
 	}
 	return nil
 }
 
+// GinMode returns the gin mode for this environment.
 func (c Config) GinMode() string {
 	if c.Environment == "development" {
 		return "debug"
@@ -144,13 +146,6 @@ func splitBrokers(raw string) []string {
 		}
 	}
 	return out
-}
-
-func defaultAuthMode(env string) string {
-	if env == "production" || env == "staging" {
-		return "gateway"
-	}
-	return "jwt"
 }
 
 func getEnv(key, fallback string) string {

@@ -5,12 +5,25 @@ import (
 	"testing"
 )
 
-func TestLoadProductionRequiresGateway(t *testing.T) {
+// Post-cutover: AUTH_MODE and GATEWAY_INTERNAL_SECRET no longer exist.
+// Production requires SERVICE_CLIENT_SECRET for outbound calls and a
+// non-empty audience for inbound verification.
+func TestLoadProductionRequiresServiceSecret(t *testing.T) {
 	t.Setenv("ENVIRONMENT", "production")
 	t.Setenv("DATABASE_URL", "postgresql://svc_finance:pass@db.example.com:5432/iag_platform?sslmode=require")
-	t.Setenv("AUTH_MODE", "gateway")
-	t.Setenv("GATEWAY_INTERNAL_SECRET", "prod-gateway-secret-min-16")
 	t.Setenv("SEED_ON_STARTUP", "false")
+	t.Setenv("SERVICE_CLIENT_SECRET", "")
+
+	if _, err := Load(); err == nil {
+		t.Fatal("expected SERVICE_CLIENT_SECRET to be required in production")
+	}
+}
+
+func TestLoadProductionValid(t *testing.T) {
+	t.Setenv("ENVIRONMENT", "production")
+	t.Setenv("DATABASE_URL", "postgresql://svc_finance:pass@db.example.com:5432/iag_platform?sslmode=require")
+	t.Setenv("SEED_ON_STARTUP", "false")
+	t.Setenv("SERVICE_CLIENT_SECRET", "a-secret-of-meaningful-length")
 
 	cfg, err := Load()
 	if err != nil {
@@ -19,17 +32,16 @@ func TestLoadProductionRequiresGateway(t *testing.T) {
 	if cfg.Port != 3006 {
 		t.Fatalf("port: %d", cfg.Port)
 	}
-	if cfg.AuthMode != "gateway" {
-		t.Fatalf("auth mode: %s", cfg.AuthMode)
+	if cfg.Audience != "iag.finance" {
+		t.Fatalf("audience: %s", cfg.Audience)
 	}
 }
 
 func TestLoadRejectsProductionSeed(t *testing.T) {
 	t.Setenv("ENVIRONMENT", "production")
 	t.Setenv("DATABASE_URL", "postgresql://svc_finance:pass@db.example.com:5432/iag_platform?sslmode=require")
-	t.Setenv("AUTH_MODE", "gateway")
-	t.Setenv("GATEWAY_INTERNAL_SECRET", "prod-gateway-secret-min-16")
 	t.Setenv("SEED_ON_STARTUP", "true")
+	t.Setenv("SERVICE_CLIENT_SECRET", "a-secret-of-meaningful-length")
 
 	if _, err := Load(); err == nil {
 		t.Fatal("expected error for SEED_ON_STARTUP in production")
@@ -38,7 +50,6 @@ func TestLoadRejectsProductionSeed(t *testing.T) {
 
 func TestLoadDevelopmentDefaults(t *testing.T) {
 	os.Unsetenv("ENVIRONMENT")
-	os.Unsetenv("AUTH_MODE")
 	t.Setenv("DATABASE_URL", "postgresql://svc_finance:iag_finance_dev@localhost:5432/iag_platform?sslmode=disable")
 
 	cfg, err := Load()

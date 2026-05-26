@@ -34,7 +34,7 @@ func NewRouter(deps RouterDeps) *gin.Engine {
 	corsCfg := cors.Config{
 		AllowOrigins:     deps.Config.CORSAllowOrigins,
 		AllowMethods:     []string{"GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"},
-		AllowHeaders:     []string{"Origin", "Content-Type", "Authorization", tenant.Header, middleware.HeaderGatewaySecret, middleware.HeaderUserID},
+		AllowHeaders:     []string{"Origin", "Content-Type", "Authorization", tenant.Header},
 		ExposeHeaders:    []string{"Content-Length"},
 		AllowCredentials: true,
 		MaxAge:           12 * 3600,
@@ -62,7 +62,7 @@ func NewRouter(deps RouterDeps) *gin.Engine {
 	router.GET("/health", ops.Health)
 	router.GET("/ready", ops.Ready)
 
-	principal := middleware.Principal(deps.Config, deps.Verifier)
+	principal := middleware.Principal(deps.Verifier)
 	v1 := router.Group("/v1", principal, middleware.AuditLog(deps.AuditLog))
 	{
 		// Integrations

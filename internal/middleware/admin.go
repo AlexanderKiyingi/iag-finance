@@ -16,14 +16,10 @@ func RequireAdmin() gin.HandlerFunc {
 			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "unauthorized"})
 			return
 		}
-		groups := claims.Groups
-		if len(groups) == 0 {
-			groups = claims.Roles
-		}
 		p := authz.Principal{
 			IsSuperuser: claims.IsSuperuser,
 			IsStaff:     claims.IsStaff,
-			Groups:      groups,
+			Groups:      claims.Groups,
 			Permissions: claims.Permissions,
 		}
 		if !authz.CanAccessAdmin(p) {
