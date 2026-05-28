@@ -36,6 +36,14 @@ jobs:
         with:
           go-version: "1.23"
 
+      - name: Fetch platform-go from meta-repo
+        run: |
+          git clone --depth 1 --branch main https://github.com/AlexanderKiyingi/IAG_multi_backend.git /tmp/iag-meta
+          mkdir -p /tmp/deps
+          mv /tmp/iag-meta/shared/platform-go /tmp/deps/platform-go
+          rm -rf /tmp/iag-meta
+          go mod edit -replace=github.com/alvor-technologies/iag-platform-go=/tmp/deps/platform-go
+
       - name: Build
         run: go build -v ./...
         env:
