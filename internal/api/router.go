@@ -29,7 +29,7 @@ type RouterDeps struct {
 
 func NewRouter(deps RouterDeps) *gin.Engine {
 	router := gin.New()
-	router.Use(gin.Logger(), gin.Recovery())
+	router.Use(gin.Logger(), gin.Recovery(), middleware.SecurityHeaders())
 
 	corsCfg := cors.Config{
 		AllowOrigins:     deps.Config.CORSAllowOrigins,
