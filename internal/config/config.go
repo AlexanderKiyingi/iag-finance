@@ -23,6 +23,7 @@ type Config struct {
 	AutoMigrate       bool
 	CORSAllowOrigins  []string
 	EnableConsumer    bool
+	EnableEventPublish bool
 	KafkaBrokers      []string
 	KafkaClientID     string
 	KafkaGroupID      string
@@ -92,8 +93,9 @@ func Load() (Config, error) {
 		SeedOnStartup:       getEnv("SEED_ON_STARTUP", seedDefault) == "true",
 		AutoMigrate:         getEnv("AUTO_MIGRATE", "true") != "false",
 		CORSAllowOrigins:    corsOrigins,
-		EnableConsumer:      getEnv("ENABLE_CONSUMER", defaultConsumer(env)) == "true",
-		KafkaBrokers:        splitBrokers(getEnv("KAFKA_BROKERS", "localhost:19092")),
+		EnableConsumer:       getEnv("ENABLE_CONSUMER", defaultConsumer(env)) == "true",
+		EnableEventPublish:   getEnv("ENABLE_EVENT_PUBLISH", "true") == "true",
+		KafkaBrokers:         splitBrokers(getEnv("KAFKA_BROKERS", "localhost:19092")),
 		KafkaClientID:       getEnv("KAFKA_CLIENT_ID", "finance"),
 		KafkaGroupID:        getEnv("KAFKA_GROUP_ID", "iag.finance.ledger"),
 		KafkaTopic:          getEnv("KAFKA_FINANCE_TOPIC", "iag.finance"),

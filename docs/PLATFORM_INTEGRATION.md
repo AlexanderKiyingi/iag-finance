@@ -14,7 +14,7 @@ Evolve `iag-finance` from a standalone prototype (`:8080`, `iag_finance` DB, no 
 | Kafka **consumer** on `iag.finance` | |
 | Hash-chained ops audit + prototype UI rows | |
 
-**Event bus:** Finance **consumes** `sale.completed`, `invoice.posted`, `fleet.fuel.recorded` on `iag.finance`.
+**Event bus:** Finance **consumes** `sale.completed` and `invoice.posted` on `iag.finance`, and `fleet.fuel.recorded` on `iag.fleet`. Finance **publishes** `sale.completed` / `invoice.posted` when AR/AP open items are created via the API (`ENABLE_EVENT_PUBLISH`).
 
 ```mermaid
 flowchart LR

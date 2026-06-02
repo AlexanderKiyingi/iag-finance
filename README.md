@@ -44,13 +44,25 @@ Via gateway: `http://localhost:8080/api/v1/finance/v1/...`
 
 **Permissions:** `finance.view_ledger` / `finance.change_ledger` (and legacy `finance.view_operations` on write/read).
 
-## Event consumer
+## Event bus
 
-`ENABLE_CONSUMER=true` subscribes to `iag.finance` and books:
+**Consumer** (`ENABLE_CONSUMER=true`):
 
-- `sale.completed`
-- `invoice.posted`
-- `fleet.fuel.recorded`
+| Topic | Group | Events |
+|-------|-------|--------|
+| `iag.finance` | `iag.finance.ledger` | `sale.completed`, `invoice.posted` |
+| `iag.fleet` | `iag.finance.fleet` | `fleet.fuel.recorded` |
+
+**Producer** (`ENABLE_EVENT_PUBLISH=true`, default on when Kafka is configured):
+
+- `POST /v1/ar/items` → `sale.completed` on `iag.finance` (consumer books AR/revenue)
+- `POST /v1/ap/items` → `invoice.posted` on `iag.finance` (consumer books expense/AP)
+
+External services may also publish the same event types to `iag.finance`.
+
+**Permissions:** registered at startup when `SERVICE_CLIENT_SECRET` is set. Mutating routes enforce `finance.change_*` / `finance.view_*` at the service (defense in depth with the gateway).
+
+**Legacy code:** the `backend/` directory is an old prototype (`github.com/iag/finance-backend`); the runnable service is `cmd/server` only.
 
 ## Docs
 

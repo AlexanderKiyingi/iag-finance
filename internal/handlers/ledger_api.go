@@ -12,6 +12,7 @@ import (
 	"github.com/shopspring/decimal"
 
 	"github.com/iag-finance/backend/internal/auditlog"
+	"github.com/iag-finance/backend/internal/events"
 	"github.com/iag-finance/backend/internal/integrations"
 	"github.com/iag-finance/backend/internal/ledger"
 )
@@ -25,6 +26,7 @@ type API struct {
 	Audit           *auditlog.Service
 	DB              HealthChecker
 	ConsumerEnabled bool
+	Events          *events.Bus
 }
 
 func (a *API) Health(c *gin.Context) {
@@ -305,6 +307,7 @@ func (a *API) CreateARItem(c *gin.Context) {
 		c.JSON(http.StatusConflict, gin.H{"error": "could not create AR item"})
 		return
 	}
+	publishSaleCompleted(c.Request.Context(), a.Events, req.DocumentRef, req.CustomerRef, req.Amount, currency)
 	c.JSON(http.StatusCreated, item)
 }
 
@@ -332,7 +335,32 @@ func (a *API) CreateAPItem(c *gin.Context) {
 		c.JSON(http.StatusConflict, gin.H{"error": "could not create AP item"})
 		return
 	}
+	publishInvoicePosted(c.Request.Context(), a.Events, req.DocumentRef, req.VendorRef, req.Amount, currency)
 	c.JSON(http.StatusCreated, item)
+}
+
+func publishSaleCompleted(ctx context.Context, bus *events.Bus, documentRef, customerRef, amount, currency string) {
+	if bus == nil || !bus.Enabled() || documentRef == "" || amount == "" {
+		return
+	}
+	bus.Publish(ctx, events.TypeSaleCompleted+":"+documentRef, events.TypeSaleCompleted, map[string]any{
+		"amount":      amount,
+		"currency":    currency,
+		"customerRef": customerRef,
+		"documentRef": documentRef,
+	}, documentRef)
+}
+
+func publishInvoicePosted(ctx context.Context, bus *events.Bus, documentRef, vendorRef, amount, currency string) {
+	if bus == nil || !bus.Enabled() || documentRef == "" || amount == "" {
+		return
+	}
+	bus.Publish(ctx, events.TypeInvoicePosted+":"+documentRef, events.TypeInvoicePosted, map[string]any{
+		"amount":      amount,
+		"currency":    currency,
+		"vendorRef":   vendorRef,
+		"documentRef": documentRef,
+	}, documentRef)
 }
 
 func (a *API) TrialBalance(c *gin.Context) {

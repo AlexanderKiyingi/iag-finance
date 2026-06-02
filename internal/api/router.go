@@ -8,6 +8,7 @@ import (
 	"github.com/iag-finance/backend/internal/chainaudit"
 	"github.com/iag-finance/backend/internal/config"
 	"github.com/iag-finance/backend/internal/db"
+	"github.com/iag-finance/backend/internal/events"
 	"github.com/iag-finance/backend/internal/handlers"
 	"github.com/iag-finance/backend/internal/ledger"
 	"github.com/iag-finance/backend/internal/middleware"
@@ -25,6 +26,7 @@ type RouterDeps struct {
 	Verifier *authclient.Verifier
 	Ledger   *ledger.Service
 	AuditLog *auditlog.Service
+	Events   *events.Bus
 }
 
 func NewRouter(deps RouterDeps) *gin.Engine {
@@ -57,42 +59,48 @@ func NewRouter(deps RouterDeps) *gin.Engine {
 		Audit:           deps.AuditLog,
 		DB:              &db.PoolHealth{Pool: deps.Pool},
 		ConsumerEnabled: deps.Config.EnableConsumer,
+		Events:          deps.Events,
 	}
 
 	router.GET("/health", ops.Health)
 	router.GET("/ready", ops.Ready)
 
 	principal := middleware.Principal(deps.Verifier)
+	ledgerRead := middleware.RequireLedgerRead()
+	ledgerWrite := middleware.RequireLedgerWrite()
+	opsRead := middleware.RequireOperationsRead()
+	opsWrite := middleware.RequireOperationsWrite()
+
 	v1 := router.Group("/v1", principal, middleware.AuditLog(deps.AuditLog))
 	{
 		// Integrations
-		v1.GET("/integrations/ura-efris", api.URAStatus)
-		v1.GET("/integrations/banking", api.BankingStatus)
+		v1.GET("/integrations/ura-efris", ledgerRead, api.URAStatus)
+		v1.GET("/integrations/banking", ledgerRead, api.BankingStatus)
 
 		// General ledger (accounting)
-		v1.GET("/chart-of-accounts", api.ListChartOfAccounts)
-		v1.POST("/chart-of-accounts", api.CreateChartAccount)
-		v1.GET("/ledger/entries", api.ListJournalEntries)
-		v1.GET("/ledger/entries/:id", api.GetJournalEntry)
-		v1.POST("/ledger/entries", api.CreateJournalEntry)
-		v1.POST("/ledger/entries/:id/post", api.PostJournalEntry)
-		v1.POST("/ledger/validate-posting", ops.ValidatePosting)
-		v1.GET("/reports/trial-balance", api.TrialBalance)
+		v1.GET("/chart-of-accounts", ledgerRead, api.ListChartOfAccounts)
+		v1.POST("/chart-of-accounts", ledgerWrite, api.CreateChartAccount)
+		v1.GET("/ledger/entries", ledgerRead, api.ListJournalEntries)
+		v1.GET("/ledger/entries/:id", ledgerRead, api.GetJournalEntry)
+		v1.POST("/ledger/entries", ledgerWrite, api.CreateJournalEntry)
+		v1.POST("/ledger/entries/:id/post", ledgerWrite, api.PostJournalEntry)
+		v1.POST("/ledger/validate-posting", ledgerWrite, ops.ValidatePosting)
+		v1.GET("/reports/trial-balance", ledgerRead, api.TrialBalance)
 
-		// AR / AP
-		v1.GET("/ar/items", api.ListARItems)
-		v1.POST("/ar/items", api.CreateARItem)
-		v1.GET("/ap/items", api.ListAPItems)
-		v1.POST("/ap/items", api.CreateAPItem)
-		v1.GET("/inbox/bank-accounts", api.ListBankAccounts)
-		v1.GET("/inbox/ap", api.ListAPInbox)
-		v1.GET("/inbox/cherry-intake", api.ListCherryIntake)
+		// AR / AP — POST publishes sale.completed / invoice.posted for async GL booking
+		v1.GET("/ar/items", ledgerRead, api.ListARItems)
+		v1.POST("/ar/items", ledgerWrite, api.CreateARItem)
+		v1.GET("/ap/items", ledgerRead, api.ListAPItems)
+		v1.POST("/ap/items", ledgerWrite, api.CreateAPItem)
+		v1.GET("/inbox/bank-accounts", opsRead, api.ListBankAccounts)
+		v1.GET("/inbox/ap", opsRead, api.ListAPInbox)
+		v1.GET("/inbox/cherry-intake", opsRead, api.ListCherryIntake)
 
 		// Hash-chain ops audit (prototype UI)
-		v1.GET("/audit/events", ops.ListAudit)
-		v1.POST("/audit/events", ops.AppendAudit)
-		v1.GET("/tables/:tableId/rows", ops.ListTableRows)
-		v1.POST("/tables/:tableId/rows", ops.AppendTableRow)
+		v1.GET("/audit/events", opsRead, ops.ListAudit)
+		v1.POST("/audit/events", opsWrite, ops.AppendAudit)
+		v1.GET("/tables/:tableId/rows", opsRead, ops.ListTableRows)
+		v1.POST("/tables/:tableId/rows", opsWrite, ops.AppendTableRow)
 
 		admin := v1.Group("/admin", middleware.RequireAdmin())
 		admin.GET("/audit", api.ListAuditLogs)

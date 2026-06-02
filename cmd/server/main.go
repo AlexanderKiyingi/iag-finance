@@ -17,11 +17,15 @@ import (
 	platformevents "github.com/alvor-technologies/iag-platform-go/events"
 	platformotel "github.com/alvor-technologies/iag-platform-go/otel"
 
+	platformserviceauth "github.com/alvor-technologies/iag-platform-go/serviceauth"
+
 	"github.com/iag-finance/backend/internal/api"
 	"github.com/iag-finance/backend/internal/authclient"
 	"github.com/iag-finance/backend/internal/config"
 	"github.com/iag-finance/backend/internal/consumer"
 	"github.com/iag-finance/backend/internal/db"
+	"github.com/iag-finance/backend/internal/events"
+	"github.com/iag-finance/backend/internal/models"
 )
 
 func main() {
@@ -61,6 +65,24 @@ func main() {
 	}
 
 	ledgerSvc, auditSvc := api.NewLedger(pool)
+
+	if cfg.ServiceClientSecret != "" {
+		go registerPermissionsLoop(ctx, cfg)
+	} else {
+		slog.Warn("SERVICE_CLIENT_SECRET unset — skipping permissions registration")
+	}
+
+	var eventBus *events.Bus
+	if cfg.EnableEventPublish && len(cfg.KafkaBrokers) > 0 {
+		eventBus = events.New(events.Config{
+			Brokers:  cfg.KafkaBrokers,
+			ClientID: cfg.KafkaClientID,
+			Topic:    cfg.KafkaTopic,
+			Enabled:  true,
+		})
+		defer func() { _ = eventBus.Close() }()
+		slog.Info("finance event publisher enabled", "topic", cfg.KafkaTopic)
+	}
 
 	if cfg.SeedOnStartup {
 		if err := ledgerSvc.Seed(ctx); err != nil {
@@ -103,6 +125,7 @@ func main() {
 		Verifier: verifier,
 		Ledger:   ledgerSvc,
 		AuditLog: auditSvc,
+		Events:   eventBus,
 	})
 
 	// Shared producer used for the DLQ. Re-used by both the iag.finance and
@@ -186,5 +209,43 @@ func main() {
 	}
 	if rdb != nil {
 		_ = rdb.Close()
+	}
+}
+
+func registerPermissionsLoop(ctx context.Context, cfg config.Config) {
+	saClient := platformserviceauth.NewClient(platformserviceauth.Options{
+		TokenURL:     cfg.AuthTokenURL,
+		ClientID:     cfg.ServiceClientID,
+		ClientSecret: cfg.ServiceClientSecret,
+		Audience:     "iag.authentication",
+	})
+	descriptors := models.PermissionDescriptors()
+	perms := make([]platformserviceauth.Permission, 0, len(descriptors))
+	for _, d := range descriptors {
+		perms = append(perms, platformserviceauth.Permission{
+			Name:        d.Name,
+			Description: d.Description,
+		})
+	}
+
+	backoff := time.Second
+	const maxBackoff = 5 * time.Minute
+	for {
+		regCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
+		err := platformserviceauth.RegisterPermissions(regCtx, saClient, cfg.JWTIssuer, "finance", perms)
+		cancel()
+		if err == nil {
+			slog.Info("permissions registered with auth service", "count", len(perms))
+			return
+		}
+		slog.Warn("permissions registration failed; retrying", "err", err, "backoff", backoff)
+		select {
+		case <-ctx.Done():
+			return
+		case <-time.After(backoff):
+		}
+		if backoff < maxBackoff {
+			backoff *= 2
+		}
 	}
 }
