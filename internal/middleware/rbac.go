@@ -6,6 +6,7 @@ import (
 	"github.com/gin-gonic/gin"
 
 	"github.com/iag-finance/backend/internal/authz"
+	"github.com/alvor-technologies/iag-platform-go/apierr"
 )
 
 func principalFromContext(c *gin.Context) (authz.Principal, bool) {
@@ -25,11 +26,11 @@ func requireAnyPermission(perms ...string) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		p, ok := principalFromContext(c)
 		if !ok {
-			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "unauthorized"})
+			apierr.Unauthorized(c, "authentication required")
 			return
 		}
 		if !authz.HasAnyPermission(p, perms...) {
-			c.AbortWithStatusJSON(http.StatusForbidden, gin.H{"error": "forbidden", "permissions": perms})
+			apierr.WriteWith(c, http.StatusForbidden, apierr.CodeForbidden, "permission denied", gin.H{"required_permission": perms})
 			return
 		}
 		c.Next()

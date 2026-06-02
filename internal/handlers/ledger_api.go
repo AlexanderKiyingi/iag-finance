@@ -15,6 +15,7 @@ import (
 	"github.com/iag-finance/backend/internal/events"
 	"github.com/iag-finance/backend/internal/integrations"
 	"github.com/iag-finance/backend/internal/ledger"
+	"github.com/alvor-technologies/iag-platform-go/apierr"
 )
 
 type HealthChecker interface {
@@ -72,7 +73,7 @@ func (a *API) BankingStatus(c *gin.Context) {
 func (a *API) ListChartOfAccounts(c *gin.Context) {
 	items, err := a.Ledger.ListChartOfAccounts(c.Request.Context())
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "could not list accounts"})
+		apierr.JSONStatus(c, http.StatusInternalServerError, "could not list accounts")
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"items": items})
@@ -89,7 +90,7 @@ type createAccountRequest struct {
 func (a *API) CreateChartAccount(c *gin.Context) {
 	var req createAccountRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		apierr.JSONStatus(c, http.StatusBadRequest, err.Error())
 		return
 	}
 	currency := req.Currency
@@ -100,14 +101,14 @@ func (a *API) CreateChartAccount(c *gin.Context) {
 	if req.ParentID != "" {
 		id, err := uuid.Parse(req.ParentID)
 		if err != nil {
-			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid parentId"})
+			apierr.JSONStatus(c, http.StatusBadRequest, "invalid parentId")
 			return
 		}
 		parentID = &id
 	}
 	acct, err := a.Ledger.CreateChartAccount(c.Request.Context(), req.Code, req.Name, req.AccountType, currency, parentID)
 	if err != nil {
-		c.JSON(http.StatusConflict, gin.H{"error": "could not create account"})
+		apierr.JSONStatus(c, http.StatusConflict, "could not create account")
 		return
 	}
 	c.JSON(http.StatusCreated, acct)
@@ -120,7 +121,7 @@ func (a *API) ListJournalEntries(c *gin.Context) {
 	limit, offset := pagination(c)
 	items, err := a.Ledger.ListJournalEntries(c.Request.Context(), limit, offset)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "could not list entries"})
+		apierr.JSONStatus(c, http.StatusInternalServerError, "could not list entries")
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{
@@ -132,16 +133,16 @@ func (a *API) ListJournalEntries(c *gin.Context) {
 func (a *API) GetJournalEntry(c *gin.Context) {
 	id, err := uuid.Parse(c.Param("id"))
 	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid id"})
+		apierr.JSONStatus(c, http.StatusBadRequest, "invalid id")
 		return
 	}
 	entry, err := a.Ledger.GetJournalEntry(c.Request.Context(), id)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "could not load entry"})
+		apierr.JSONStatus(c, http.StatusInternalServerError, "could not load entry")
 		return
 	}
 	if entry == nil {
-		c.JSON(http.StatusNotFound, gin.H{"error": "not found"})
+		apierr.JSONStatus(c, http.StatusNotFound, "not found")
 		return
 	}
 	c.JSON(http.StatusOK, entry)
@@ -162,12 +163,12 @@ type createJournalRequest struct {
 func (a *API) CreateJournalEntry(c *gin.Context) {
 	var req createJournalRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		apierr.JSONStatus(c, http.StatusBadRequest, err.Error())
 		return
 	}
 	lines, err := parseLines(req.Lines)
 	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		apierr.JSONStatus(c, http.StatusBadRequest, err.Error())
 		return
 	}
 	var createdBy *uuid.UUID
@@ -188,7 +189,7 @@ func (a *API) CreateJournalEntry(c *gin.Context) {
 		case errors.Is(err, ledger.ErrAccountNotFound):
 			status = http.StatusBadRequest
 		}
-		c.JSON(status, gin.H{"error": err.Error()})
+		apierr.JSONStatus(c, status, err.Error())
 		return
 	}
 	c.JSON(http.StatusCreated, entry)
@@ -200,7 +201,7 @@ func (a *API) CreateJournalEntry(c *gin.Context) {
 func (a *API) PostJournalEntry(c *gin.Context) {
 	id, err := uuid.Parse(c.Param("id"))
 	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid id"})
+		apierr.JSONStatus(c, http.StatusBadRequest, "invalid id")
 		return
 	}
 	entry, err := a.Ledger.PostJournalEntry(c.Request.Context(), id)
@@ -209,7 +210,7 @@ func (a *API) PostJournalEntry(c *gin.Context) {
 		if errors.Is(err, ledger.ErrInvalidStatus) || errors.Is(err, ledger.ErrUnbalancedEntry) {
 			status = http.StatusUnprocessableEntity
 		}
-		c.JSON(status, gin.H{"error": err.Error()})
+		apierr.JSONStatus(c, status, err.Error())
 		return
 	}
 	c.JSON(http.StatusOK, entry)
@@ -222,7 +223,7 @@ func (a *API) ListARItems(c *gin.Context) {
 	limit, offset := pagination(c)
 	items, err := a.Ledger.ListARItems(c.Request.Context(), limit, offset)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "could not list AR items"})
+		apierr.JSONStatus(c, http.StatusInternalServerError, "could not list AR items")
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"items": items})
@@ -232,7 +233,7 @@ func (a *API) ListAPItems(c *gin.Context) {
 	limit, offset := pagination(c)
 	items, err := a.Ledger.ListAPItems(c.Request.Context(), limit, offset)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "could not list AP items"})
+		apierr.JSONStatus(c, http.StatusInternalServerError, "could not list AP items")
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"items": items})
@@ -286,7 +287,7 @@ type createOpenItemRequest struct {
 func (a *API) CreateARItem(c *gin.Context) {
 	var req createOpenItemRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		apierr.JSONStatus(c, http.StatusBadRequest, err.Error())
 		return
 	}
 	currency := req.Currency
@@ -297,14 +298,14 @@ func (a *API) CreateARItem(c *gin.Context) {
 	if req.DueDate != "" {
 		t, err := time.Parse("2006-01-02", req.DueDate)
 		if err != nil {
-			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid dueDate"})
+			apierr.JSONStatus(c, http.StatusBadRequest, "invalid dueDate")
 			return
 		}
 		due = &t
 	}
 	item, err := a.Ledger.CreateARItem(c.Request.Context(), req.CustomerRef, req.DocumentRef, req.Description, req.Amount, currency, due)
 	if err != nil {
-		c.JSON(http.StatusConflict, gin.H{"error": "could not create AR item"})
+		apierr.JSONStatus(c, http.StatusConflict, "could not create AR item")
 		return
 	}
 	publishSaleCompleted(c.Request.Context(), a.Events, req.DocumentRef, req.CustomerRef, req.Amount, currency)
@@ -314,7 +315,7 @@ func (a *API) CreateARItem(c *gin.Context) {
 func (a *API) CreateAPItem(c *gin.Context) {
 	var req createOpenItemRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		apierr.JSONStatus(c, http.StatusBadRequest, err.Error())
 		return
 	}
 	currency := req.Currency
@@ -325,14 +326,14 @@ func (a *API) CreateAPItem(c *gin.Context) {
 	if req.DueDate != "" {
 		t, err := time.Parse("2006-01-02", req.DueDate)
 		if err != nil {
-			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid dueDate"})
+			apierr.JSONStatus(c, http.StatusBadRequest, "invalid dueDate")
 			return
 		}
 		due = &t
 	}
 	item, err := a.Ledger.CreateAPItem(c.Request.Context(), req.VendorRef, req.DocumentRef, req.Description, req.Amount, currency, due)
 	if err != nil {
-		c.JSON(http.StatusConflict, gin.H{"error": "could not create AP item"})
+		apierr.JSONStatus(c, http.StatusConflict, "could not create AP item")
 		return
 	}
 	publishInvoicePosted(c.Request.Context(), a.Events, req.DocumentRef, req.VendorRef, req.Amount, currency)
@@ -366,7 +367,7 @@ func publishInvoicePosted(ctx context.Context, bus *events.Bus, documentRef, ven
 func (a *API) TrialBalance(c *gin.Context) {
 	rows, err := a.Ledger.TrialBalance(c.Request.Context())
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "could not build trial balance"})
+		apierr.JSONStatus(c, http.StatusInternalServerError, "could not build trial balance")
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"rows": rows, "status": "posted_entries_only"})

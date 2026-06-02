@@ -6,6 +6,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/alvor-technologies/iag-platform-go/corsenv"
 )
 
 // Config holds runtime knobs for the finance service.
@@ -72,7 +74,7 @@ func Load() (Config, error) {
 		return Config{}, fmt.Errorf("invalid SHUTDOWN_TIMEOUT_SECONDS: %w", err)
 	}
 
-	corsRaw := getEnv("CORS_ALLOW_ORIGIN", "http://localhost:3000,http://localhost:5173")
+	corsRaw := corsenv.Allowlist(corsenv.DefaultDevOrigins)
 	var corsOrigins []string
 	for _, p := range strings.Split(corsRaw, ",") {
 		if s := strings.TrimSpace(p); s != "" {

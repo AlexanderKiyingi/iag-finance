@@ -6,6 +6,7 @@ import (
 	"github.com/gin-gonic/gin"
 
 	"github.com/iag-finance/backend/internal/authz"
+	"github.com/alvor-technologies/iag-platform-go/apierr"
 )
 
 // RequireAdmin enforces Django-style admin access (defense in depth when not using the gateway).
@@ -13,7 +14,7 @@ func RequireAdmin() gin.HandlerFunc {
 	return func(c *gin.Context) {
 		claims, ok := GetClaims(c)
 		if !ok || claims == nil {
-			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "unauthorized"})
+			apierr.Unauthorized(c, "authentication required")
 			return
 		}
 		p := authz.Principal{
@@ -23,7 +24,7 @@ func RequireAdmin() gin.HandlerFunc {
 			Permissions: claims.Permissions,
 		}
 		if !authz.CanAccessAdmin(p) {
-			c.AbortWithStatusJSON(http.StatusForbidden, gin.H{"error": "forbidden", "require_admin": true})
+			apierr.WriteWith(c, http.StatusForbidden, apierr.CodeForbidden, "admin access required", gin.H{"require_admin": true})
 			return
 		}
 		c.Next()

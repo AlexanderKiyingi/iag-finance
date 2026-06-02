@@ -5,12 +5,13 @@ import (
 	"strconv"
 
 	"github.com/gin-gonic/gin"
+	"github.com/alvor-technologies/iag-platform-go/apierr"
 )
 
 func (a *API) MonitoringSummary(c *gin.Context) {
 	summary, err := a.Audit.MonitoringSummary(c.Request.Context())
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "could not load monitoring summary"})
+		apierr.JSONStatus(c, http.StatusInternalServerError, "could not load monitoring summary")
 		return
 	}
 	if a.ConsumerEnabled {
@@ -27,7 +28,7 @@ func (a *API) MonitoringActivity(c *gin.Context) {
 	limit, _ := strconv.Atoi(c.DefaultQuery("limit", "25"))
 	items, err := a.Audit.RecentActivity(c.Request.Context(), limit)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "could not load activity"})
+		apierr.JSONStatus(c, http.StatusInternalServerError, "could not load activity")
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"items": items})
@@ -36,7 +37,7 @@ func (a *API) MonitoringActivity(c *gin.Context) {
 func (a *API) MonitoringLedger(c *gin.Context) {
 	summary, err := a.Audit.MonitoringSummary(c.Request.Context())
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "could not load ledger stats"})
+		apierr.JSONStatus(c, http.StatusInternalServerError, "could not load ledger stats")
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{

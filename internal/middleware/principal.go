@@ -7,6 +7,7 @@ import (
 	"github.com/gin-gonic/gin"
 
 	"github.com/iag-finance/backend/internal/authclient"
+	"github.com/alvor-technologies/iag-platform-go/apierr"
 )
 
 const claimsContextKey = "claims"
@@ -27,18 +28,18 @@ func GetClaims(c *gin.Context) (*authclient.Claims, bool) {
 func Principal(verifier *authclient.Verifier) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		if verifier == nil {
-			c.AbortWithStatusJSON(http.StatusServiceUnavailable, gin.H{"error": "jwt verifier not configured"})
+			apierr.Write(c, http.StatusServiceUnavailable, apierr.CodeServiceUnavailable, "JWT verifier not configured")
 			return
 		}
 		header := c.GetHeader("Authorization")
 		if header == "" || !strings.HasPrefix(header, "Bearer ") {
-			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "missing bearer token"})
+			apierr.Unauthorized(c, "missing bearer token")
 			return
 		}
 		token := strings.TrimPrefix(header, "Bearer ")
 		claims, userID, err := verifier.Verify(token)
 		if err != nil {
-			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "invalid token"})
+			apierr.Unauthorized(c, "invalid or expired token")
 			return
 		}
 		c.Set("userID", userID)

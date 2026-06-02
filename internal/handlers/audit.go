@@ -8,6 +8,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/iag-finance/backend/internal/auditlog"
+	"github.com/alvor-technologies/iag-platform-go/apierr"
 )
 
 func (a *API) ListAuditLogs(c *gin.Context) {
@@ -18,7 +19,7 @@ func (a *API) ListAuditLogs(c *gin.Context) {
 	if actor := c.Query("actorId"); actor != "" {
 		id, err := uuid.Parse(actor)
 		if err != nil {
-			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid actorId"})
+			apierr.JSONStatus(c, http.StatusBadRequest, "invalid actorId")
 			return
 		}
 		filter.ActorID = &id
@@ -28,7 +29,7 @@ func (a *API) ListAuditLogs(c *gin.Context) {
 	if from := c.Query("from"); from != "" {
 		t, err := time.Parse(time.RFC3339, from)
 		if err != nil {
-			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid from (RFC3339)"})
+			apierr.JSONStatus(c, http.StatusBadRequest, "invalid from (RFC3339)")
 			return
 		}
 		filter.From = &t
@@ -36,7 +37,7 @@ func (a *API) ListAuditLogs(c *gin.Context) {
 	if to := c.Query("to"); to != "" {
 		t, err := time.Parse(time.RFC3339, to)
 		if err != nil {
-			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid to (RFC3339)"})
+			apierr.JSONStatus(c, http.StatusBadRequest, "invalid to (RFC3339)")
 			return
 		}
 		filter.To = &t
@@ -44,7 +45,7 @@ func (a *API) ListAuditLogs(c *gin.Context) {
 
 	items, total, err := a.Audit.List(c.Request.Context(), filter)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "could not list audit logs"})
+		apierr.JSONStatus(c, http.StatusInternalServerError, "could not list audit logs")
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"items": items, "total": total, "limit": limit, "offset": offset})
@@ -53,16 +54,16 @@ func (a *API) ListAuditLogs(c *gin.Context) {
 func (a *API) GetAuditLog(c *gin.Context) {
 	id, err := uuid.Parse(c.Param("id"))
 	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid id"})
+		apierr.JSONStatus(c, http.StatusBadRequest, "invalid id")
 		return
 	}
 	entry, err := a.Audit.Get(c.Request.Context(), id)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "could not load audit entry"})
+		apierr.JSONStatus(c, http.StatusInternalServerError, "could not load audit entry")
 		return
 	}
 	if entry == nil {
-		c.JSON(http.StatusNotFound, gin.H{"error": "not found"})
+		apierr.JSONStatus(c, http.StatusNotFound, "not found")
 		return
 	}
 	c.JSON(http.StatusOK, entry)

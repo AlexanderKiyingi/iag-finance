@@ -15,6 +15,7 @@ import (
 	"github.com/iag-finance/backend/internal/tablerows"
 	"github.com/iag-finance/backend/internal/tenant"
 	"github.com/redis/go-redis/v9"
+	"github.com/alvor-technologies/iag-platform-go/apierr"
 )
 
 type Handlers struct {
@@ -69,12 +70,12 @@ func (h *Handlers) Ready(c *gin.Context) {
 func (h *Handlers) AppendAudit(c *gin.Context) {
 	var body chainaudit.AppendInput
 	if err := c.ShouldBindJSON(&body); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		apierr.JSONStatus(c, http.StatusBadRequest, err.Error())
 		return
 	}
 	ev, err := h.ChainAudit.Append(c.Request.Context(), tenant.FromGin(c), body)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		apierr.JSONStatus(c, http.StatusInternalServerError, err.Error())
 		return
 	}
 	c.JSON(http.StatusCreated, ev)
@@ -84,7 +85,7 @@ func (h *Handlers) ListAudit(c *gin.Context) {
 	limit, _ := strconv.Atoi(c.Query("limit"))
 	list, err := h.ChainAudit.List(c.Request.Context(), tenant.FromGin(c), limit)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		apierr.JSONStatus(c, http.StatusInternalServerError, err.Error())
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"events": list})
@@ -102,7 +103,7 @@ func (h *Handlers) ListTableRows(c *gin.Context) {
 	}
 	list, err := h.Tables.List(c.Request.Context(), tenant.FromGin(c), tableID)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		apierr.JSONStatus(c, http.StatusInternalServerError, err.Error())
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"rows": list})
@@ -111,12 +112,12 @@ func (h *Handlers) ListTableRows(c *gin.Context) {
 func (h *Handlers) AppendTableRow(c *gin.Context) {
 	var body tablerows.AppendBody
 	if err := c.ShouldBindJSON(&body); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		apierr.JSONStatus(c, http.StatusBadRequest, err.Error())
 		return
 	}
 	row, err := h.Tables.Append(c.Request.Context(), tenant.FromGin(c), c.Param("tableId"), body.RowHTML)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		apierr.JSONStatus(c, http.StatusInternalServerError, err.Error())
 		return
 	}
 	c.JSON(http.StatusCreated, row)
@@ -125,7 +126,7 @@ func (h *Handlers) AppendTableRow(c *gin.Context) {
 func (h *Handlers) ValidatePosting(c *gin.Context) {
 	var body ledger.ValidateBody
 	if err := c.ShouldBindJSON(&body); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		apierr.JSONStatus(c, http.StatusBadRequest, err.Error())
 		return
 	}
 	res := ledger.ValidatePosting(body)
