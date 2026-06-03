@@ -13,7 +13,7 @@ This is **not** end-user login accounts (see [`iag-authentication`](../authentic
 ```bash
 pnpm infra:up
 cd shared/services/finance
-cp config/.env.example .env
+cp .env.example .env
 go run ./cmd/server
 ```
 

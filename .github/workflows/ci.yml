@@ -36,29 +36,22 @@ jobs:
         with:
           go-version: "1.23"
 
-      - name: Fetch platform-go from meta-repo
-        run: |
-          git clone --depth 1 --branch main https://github.com/AlexanderKiyingi/IAG_multi_backend.git /tmp/iag-meta
-          mkdir -p /tmp/deps
-          mv /tmp/iag-meta/shared/platform-go /tmp/deps/platform-go
-          rm -rf /tmp/iag-meta
-          go mod edit -replace=github.com/alvor-technologies/iag-platform-go=/tmp/deps/platform-go
+      - name: Use vendored platform-go
+        run: go mod edit -replace=github.com/alvor-technologies/iag-platform-go=$(pwd)/third_party/platform-go
 
       - name: Build
         run: go build -v ./...
         env:
           DATABASE_URL: postgres://iag:iag_dev@localhost:5432/iag_platform?sslmode=disable&search_path=finance
           ENVIRONMENT: staging
-          AUTH_MODE: jwt
-          GATEWAY_INTERNAL_SECRET: dev-gateway-secret-min-16-chars
+          AUDIENCE: iag.finance
 
       - name: Test
         run: go test ./...
         env:
           DATABASE_URL: postgres://iag:iag_dev@localhost:5432/iag_platform?sslmode=disable&search_path=finance
           ENVIRONMENT: staging
-          AUTH_MODE: jwt
-          GATEWAY_INTERNAL_SECRET: dev-gateway-secret-min-16-chars
+          AUDIENCE: iag.finance
 
   docker:
     runs-on: ubuntu-latest
@@ -66,8 +59,8 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Build production image
-        run: docker build -t iag-finance:ci .
+      - name: Build production image (standalone target)
+        run: docker build --target standalone -t iag-finance:ci .
 
       - name: Verify image healthcheck
         run: docker run --rm iag-finance:ci wget -qO- http://127.0.0.1:3006/ready
