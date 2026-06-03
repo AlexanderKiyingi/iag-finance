@@ -2,11 +2,14 @@ package db
 
 import (
 	"context"
+	"crypto/sha256"
 	"embed"
+	"encoding/hex"
 	"fmt"
 	"sort"
 	"strings"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -19,8 +22,22 @@ var demoSeedSQL string
 //go:embed seed/operational.sql
 var operationalSeedSQL string
 
+const (
+	financeSchema          = "finance"
+	financeMigrationsTable = "finance_schema_migrations"
+)
+
 func Connect(ctx context.Context, databaseURL string) (*pgxpool.Pool, error) {
-	pool, err := pgxpool.New(ctx, databaseURL)
+	cfg, err := pgxpool.ParseConfig(databaseURL)
+	if err != nil {
+		return nil, fmt.Errorf("parse database url: %w", err)
+	}
+	cfg.AfterConnect = func(ctx context.Context, conn *pgx.Conn) error {
+		_, err := conn.Exec(ctx, `SET search_path TO finance, public`)
+		return err
+	}
+
+	pool, err := pgxpool.NewWithConfig(ctx, cfg)
 	if err != nil {
 		return nil, fmt.Errorf("connect database: %w", err)
 	}
@@ -32,14 +49,28 @@ func Connect(ctx context.Context, databaseURL string) (*pgxpool.Pool, error) {
 }
 
 func RunMigrations(ctx context.Context, pool *pgxpool.Pool) error {
-	_, err := pool.Exec(ctx, `
-		CREATE TABLE IF NOT EXISTS schema_migrations (
+	// Isolated from other services sharing iag_platform. Several backends ship
+	// 001_init.sql; a global schema_migrations table causes false "already applied"
+	// skips and legacy NOT NULL checksum columns break INSERT (version-only).
+	if _, err := pool.Exec(ctx, `CREATE SCHEMA IF NOT EXISTS finance`); err != nil {
+		return fmt.Errorf("create finance schema: %w", err)
+	}
+	if _, err := pool.Exec(ctx, `CREATE EXTENSION IF NOT EXISTS pgcrypto`); err != nil {
+		return fmt.Errorf("ensure pgcrypto extension: %w", err)
+	}
+	if _, err := pool.Exec(ctx, fmt.Sprintf(`
+		CREATE TABLE IF NOT EXISTS %s.%s (
 			version TEXT PRIMARY KEY,
-			applied_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+			applied_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+			checksum TEXT NOT NULL DEFAULT ''
 		)
-	`)
-	if err != nil {
-		return fmt.Errorf("create schema_migrations: %w", err)
+	`, financeSchema, financeMigrationsTable)); err != nil {
+		return fmt.Errorf("create %s: %w", financeMigrationsTable, err)
+	}
+	if _, err := pool.Exec(ctx, fmt.Sprintf(`
+		ALTER TABLE %s.%s ADD COLUMN IF NOT EXISTS checksum TEXT NOT NULL DEFAULT ''
+	`, financeSchema, financeMigrationsTable)); err != nil {
+		return fmt.Errorf("ensure %s.checksum: %w", financeMigrationsTable, err)
 	}
 
 	entries, err := migrationFS.ReadDir("migrations")
@@ -57,7 +88,8 @@ func RunMigrations(ctx context.Context, pool *pgxpool.Pool) error {
 
 	for _, name := range files {
 		var exists bool
-		if err := pool.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM schema_migrations WHERE version = $1)`, name).Scan(&exists); err != nil {
+		q := fmt.Sprintf(`SELECT EXISTS(SELECT 1 FROM %s.%s WHERE version = $1)`, financeSchema, financeMigrationsTable)
+		if err := pool.QueryRow(ctx, q, name).Scan(&exists); err != nil {
 			return err
 		}
 		if exists {
@@ -69,15 +101,23 @@ func RunMigrations(ctx context.Context, pool *pgxpool.Pool) error {
 			return err
 		}
 
+		sum := sha256.Sum256(body)
+		checksum := hex.EncodeToString(sum[:])
+
 		tx, err := pool.Begin(ctx)
 		if err != nil {
 			return err
 		}
-		if _, err := tx.Exec(ctx, string(body)); err != nil {
+		if _, err := tx.Exec(ctx, `SET search_path TO finance, public`); err != nil {
+			_ = tx.Rollback(ctx)
+			return fmt.Errorf("migration %s set search_path: %w", name, err)
+		}
+		if _, err := tx.Exec(ctx, string(body), pgx.QueryExecModeSimpleProtocol); err != nil {
 			_ = tx.Rollback(ctx)
 			return fmt.Errorf("migration %s: %w", name, err)
 		}
-		if _, err := tx.Exec(ctx, `INSERT INTO schema_migrations (version) VALUES ($1)`, name); err != nil {
+		insert := fmt.Sprintf(`INSERT INTO %s.%s (version, checksum) VALUES ($1, $2)`, financeSchema, financeMigrationsTable)
+		if _, err := tx.Exec(ctx, insert, name, checksum); err != nil {
 			_ = tx.Rollback(ctx)
 			return err
 		}
