@@ -52,6 +52,7 @@ Via gateway: `http://localhost:8080/api/v1/finance/v1/...`
 |-------|-------|--------|
 | `iag.finance` | `iag.finance.ledger` | `sale.completed`, `invoice.posted` |
 | `iag.fleet` | `iag.finance.fleet` | `fleet.fuel.recorded` |
+| `iag.supply-chain` | `iag.finance.supply-chain` | `scm.party.created`, `scm.party.updated` (AP `party_id` backfill) |
 
 **Producer** (`ENABLE_EVENT_PUBLISH=true`, default on when Kafka is configured):
 
@@ -63,6 +64,14 @@ External services may also publish the same event types to `iag.finance`.
 **Permissions:** registered at startup when `SERVICE_CLIENT_SECRET` is set. Mutating routes enforce `finance.change_*` / `finance.view_*` at the service (defense in depth with the gateway).
 
 **Legacy code:** the `backend/` directory is an old prototype (`github.com/iag/finance-backend`); the runnable service is `cmd/server` only.
+
+## Vendor portal
+
+| Method | Path | Description |
+|--------|------|-------------|
+| GET | `/v1/portal/ap` | AP open items for `?party_id=` (from linked supplier profile) |
+
+SCM party events backfill `party_id` on `ap_open_items` where `vendor_ref` matches the party name or business id.
 
 ## Docs
 
