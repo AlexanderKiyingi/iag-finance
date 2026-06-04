@@ -96,6 +96,8 @@ func NewRouter(deps RouterDeps) *gin.Engine {
 		v1.GET("/inbox/ap", opsRead, api.ListAPInbox)
 		v1.GET("/inbox/cherry-intake", opsRead, api.ListCherryIntake)
 
+		v1.GET("/portal/ap", opsRead, api.PortalAP)
+
 		// Hash-chain ops audit (prototype UI)
 		v1.GET("/audit/events", opsRead, ops.ListAudit)
 		v1.POST("/audit/events", opsWrite, ops.AppendAudit)

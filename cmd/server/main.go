@@ -26,6 +26,7 @@ import (
 	"github.com/iag-finance/backend/internal/db"
 	"github.com/iag-finance/backend/internal/events"
 	"github.com/iag-finance/backend/internal/models"
+	"github.com/iag-finance/backend/internal/repository"
 )
 
 func main() {
@@ -65,6 +66,7 @@ func main() {
 	}
 
 	ledgerSvc, auditSvc := api.NewLedger(pool)
+	repo := repository.New(pool)
 
 	if cfg.ServiceClientSecret != "" {
 		go registerPermissionsLoop(ctx, cfg)
@@ -166,6 +168,18 @@ func main() {
 			log.Fatal("finance fleet consumer: ", err)
 		}
 		consumers = append(consumers, c2)
+
+		// Tertiary: iag.supply-chain — scm.party.* for AP party_id backfill.
+		c3, err := consumer.NewSupplyChain(consumer.Config{
+			Brokers:  cfg.KafkaBrokers,
+			GroupID:  "iag.finance.supply-chain",
+			Topic:    cfg.KafkaSupplyChainTopic,
+			DLQTopic: cfg.KafkaDLQTopic,
+		}, repo, dlqProducer)
+		if err != nil {
+			log.Fatal("finance supply-chain consumer: ", err)
+		}
+		consumers = append(consumers, c3)
 
 		for _, c := range consumers {
 			c := c

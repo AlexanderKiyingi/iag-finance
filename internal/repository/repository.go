@@ -338,6 +338,24 @@ func (r *Repository) ListAPOpenItems(ctx context.Context, limit, offset int) ([]
 	return scanAPItems(rows)
 }
 
+func (r *Repository) ListAPByPartyID(ctx context.Context, partyID uuid.UUID, limit, offset int) ([]domain.APOpenItem, error) {
+	if limit <= 0 || limit > 100 {
+		limit = 50
+	}
+	rows, err := r.pool.Query(ctx, `
+		SELECT id, vendor_ref, document_ref, description, amount::text, currency, due_date, status, journal_entry_id, source_event_id, created_at, updated_at
+		FROM ap_open_items
+		WHERE party_id = $1
+		ORDER BY due_date DESC NULLS LAST
+		LIMIT $2 OFFSET $3
+	`, partyID, limit, offset)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	return scanAPItems(rows)
+}
+
 func scanARItems(rows pgx.Rows) ([]domain.AROpenItem, error) {
 	var items []domain.AROpenItem
 	for rows.Next() {

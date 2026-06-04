@@ -29,8 +29,9 @@ type Config struct {
 	KafkaBrokers      []string
 	KafkaClientID     string
 	KafkaGroupID      string
-	KafkaTopic        string
-	KafkaDLQTopic     string
+	KafkaTopic            string
+	KafkaSupplyChainTopic string
+	KafkaDLQTopic         string
 	ShutdownTimeout   time.Duration
 	ReadHeaderTimeout time.Duration
 
@@ -100,8 +101,9 @@ func Load() (Config, error) {
 		KafkaBrokers:         splitBrokers(getEnv("KAFKA_BROKERS", "localhost:19092")),
 		KafkaClientID:       getEnv("KAFKA_CLIENT_ID", "finance"),
 		KafkaGroupID:        getEnv("KAFKA_GROUP_ID", "iag.finance.ledger"),
-		KafkaTopic:          getEnv("KAFKA_FINANCE_TOPIC", "iag.finance"),
-		KafkaDLQTopic:       getEnv("KAFKA_DLQ_TOPIC", "iag.finance.dlq"),
+		KafkaTopic:            getEnv("KAFKA_FINANCE_TOPIC", "iag.finance"),
+		KafkaSupplyChainTopic: getEnv("KAFKA_SUPPLY_CHAIN_TOPIC", "iag.supply-chain"),
+		KafkaDLQTopic:         getEnv("KAFKA_DLQ_TOPIC", "iag.finance.dlq"),
 		ShutdownTimeout:     time.Duration(shutdownSec) * time.Second,
 		ReadHeaderTimeout:   10 * time.Second,
 		ServiceClientID:     getEnv("SERVICE_CLIENT_ID", "iag-finance"),
