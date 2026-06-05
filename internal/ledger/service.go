@@ -77,6 +77,10 @@ func (s *Service) ListAPByPartyID(ctx context.Context, partyID uuid.UUID, limit,
 	return s.repo.ListAPByPartyID(ctx, partyID, limit, offset)
 }
 
+func (s *Service) PartyIDForPlatformUser(ctx context.Context, platformUserID uuid.UUID) (uuid.UUID, error) {
+	return s.repo.PartyIDForPlatformUser(ctx, platformUserID)
+}
+
 func (s *Service) CreateARItem(ctx context.Context, customerRef, documentRef, description, amount, currency string, dueDate *time.Time) (*domain.AROpenItem, error) {
 	return s.repo.CreateAROpenItem(ctx, customerRef, documentRef, description, amount, currency, dueDate, nil, nil)
 }

@@ -47,6 +47,11 @@ func RequireLedgerWrite() gin.HandlerFunc {
 	return requireAnyPermission("finance.change_ledger", "finance.change_operations")
 }
 
+// RequirePortalAP allows vendor portal users to read their own AP lines.
+func RequirePortalAP() gin.HandlerFunc {
+	return requireAnyPermission("finance.view_own_ap", "finance.view_own_payment")
+}
+
 // RequireOperationsRead allows ops audit / prototype table reads.
 func RequireOperationsRead() gin.HandlerFunc {
 	return requireAnyPermission("finance.view_operations", "finance.view_ledger")

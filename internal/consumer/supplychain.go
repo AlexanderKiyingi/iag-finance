@@ -13,8 +13,9 @@ import (
 )
 
 const (
-	scmPartyCreated = "scm.party.created"
-	scmPartyUpdated = "scm.party.updated"
+	scmPartyCreated      = "scm.party.created"
+	scmPartyUpdated      = "scm.party.updated"
+	scmPartyPortalLinked = "scm.party.portal_linked"
 )
 
 type supplyChainHandler struct {
@@ -24,10 +25,15 @@ type supplyChainHandler struct {
 func (h *supplyChainHandler) Handle(ctx context.Context, env platformevents.Envelope) error {
 	switch env.Type {
 	case scmPartyCreated, scmPartyUpdated:
+		return h.syncAPParty(ctx, env.Data)
+	case scmPartyPortalLinked:
+		return h.syncPortalLink(ctx, env.Data)
 	default:
 		return nil
 	}
-	data := env.Data
+}
+
+func (h *supplyChainHandler) syncAPParty(ctx context.Context, data map[string]any) error {
 	if data == nil {
 		return nil
 	}
@@ -60,6 +66,30 @@ func (h *supplyChainHandler) Handle(ctx context.Context, env platformevents.Enve
 		slog.Info("finance party sync updated AP rows", "party_id", partyID, "rows", n)
 	}
 	return nil
+}
+
+func (h *supplyChainHandler) syncPortalLink(ctx context.Context, data map[string]any) error {
+	if data == nil {
+		return nil
+	}
+	userRaw, _ := data["platform_user_id"].(string)
+	partyRaw, _ := data["party_id"].(string)
+	userRaw = strings.TrimSpace(userRaw)
+	partyRaw = strings.TrimSpace(partyRaw)
+	if userRaw == "" || partyRaw == "" {
+		return nil
+	}
+	platformUserID, err := uuid.Parse(userRaw)
+	if err != nil {
+		return platformevents.Permanent(err)
+	}
+	partyID, err := uuid.Parse(partyRaw)
+	if err != nil {
+		return platformevents.Permanent(err)
+	}
+	businessID, _ := data["party_business_id"].(string)
+	supplierType, _ := data["supplier_type"].(string)
+	return h.repo.UpsertPortalPartyLink(ctx, platformUserID, partyID, businessID, supplierType)
 }
 
 // NewSupplyChain builds a consumer for iag.supply-chain party sync (Phase 4.6).
