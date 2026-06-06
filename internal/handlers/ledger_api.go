@@ -12,9 +12,12 @@ import (
 	"github.com/shopspring/decimal"
 
 	"github.com/iag-finance/backend/internal/auditlog"
+	"github.com/iag-finance/backend/internal/config"
+	"github.com/iag-finance/backend/internal/domain"
 	"github.com/iag-finance/backend/internal/events"
 	"github.com/iag-finance/backend/internal/integrations"
 	"github.com/iag-finance/backend/internal/ledger"
+	"github.com/iag-finance/backend/internal/usersclient"
 	"github.com/alvor-technologies/iag-platform-go/apierr"
 )
 
@@ -28,6 +31,9 @@ type API struct {
 	DB              HealthChecker
 	ConsumerEnabled bool
 	Events          *events.Bus
+	Integrations    *integrations.Registry
+	Cfg             config.Config
+	Users           *usersclient.Client
 }
 
 func (a *API) Health(c *gin.Context) {
@@ -60,14 +66,6 @@ func (a *API) FinanceHealth(c *gin.Context) {
 		"status":       "ok",
 		"integrations": items,
 	})
-}
-
-func (a *API) URAStatus(c *gin.Context) {
-	c.JSON(http.StatusOK, integrations.URAStatus())
-}
-
-func (a *API) BankingStatus(c *gin.Context) {
-	c.JSON(http.StatusOK, integrations.BankingStatus())
 }
 
 func (a *API) ListChartOfAccounts(c *gin.Context) {
@@ -275,18 +273,29 @@ func parseLines(req []journalLineRequest) ([]ledger.LineInput, error) {
 }
 
 type createOpenItemRequest struct {
-	CustomerRef string `json:"customerRef"`
-	VendorRef   string `json:"vendorRef"`
-	DocumentRef string `json:"documentRef" binding:"required"`
-	Description string `json:"description"`
-	Amount      string `json:"amount" binding:"required"`
-	Currency    string `json:"currency"`
-	DueDate     string `json:"dueDate"`
+	OrgID             string `json:"orgId"`
+	BillingIdentityID string `json:"billingIdentityId"`
+	CustomerRef       string `json:"customerRef"`
+	VendorRef         string `json:"vendorRef"`
+	DocumentRef       string `json:"documentRef" binding:"required"`
+	Description       string `json:"description"`
+	Amount            string `json:"amount" binding:"required"`
+	Currency          string `json:"currency"`
+	DueDate           string `json:"dueDate"`
 }
 
 func (a *API) CreateARItem(c *gin.Context) {
 	var req createOpenItemRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
+		apierr.JSONStatus(c, http.StatusBadRequest, err.Error())
+		return
+	}
+	billing, err := a.resolveBillingCustomerRef(c.Request.Context(), billingResolveInput{
+		OrgID:             req.OrgID,
+		BillingIdentityID: req.BillingIdentityID,
+		CustomerRef:       req.CustomerRef,
+	})
+	if err != nil {
 		apierr.JSONStatus(c, http.StatusBadRequest, err.Error())
 		return
 	}
@@ -303,12 +312,17 @@ func (a *API) CreateARItem(c *gin.Context) {
 		}
 		due = &t
 	}
-	item, err := a.Ledger.CreateARItem(c.Request.Context(), req.CustomerRef, req.DocumentRef, req.Description, req.Amount, currency, due)
+	var item *domain.AROpenItem
+	if billing.BillingOrgID != nil {
+		item, err = a.Ledger.CreateARItemWithBilling(c.Request.Context(), billing.CustomerRef, req.DocumentRef, req.Description, req.Amount, currency, due, billing.BillingOrgID, billing.BillingIdentityID)
+	} else {
+		item, err = a.Ledger.CreateARItem(c.Request.Context(), billing.CustomerRef, req.DocumentRef, req.Description, req.Amount, currency, due)
+	}
 	if err != nil {
 		apierr.JSONStatus(c, http.StatusConflict, "could not create AR item")
 		return
 	}
-	publishSaleCompleted(c.Request.Context(), a.Events, req.DocumentRef, req.CustomerRef, req.Amount, currency)
+	publishSaleCompleted(c.Request.Context(), a.Events, req.DocumentRef, billing.CustomerRef, req.Amount, currency)
 	c.JSON(http.StatusCreated, item)
 }
 

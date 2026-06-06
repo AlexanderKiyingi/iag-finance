@@ -1,0 +1,119 @@
+openapi: 3.0.3
+info:
+  title: IAG Finance API
+  version: 1.0.0
+  description: General ledger, AR/AP, payments, and finance reports (gateway prefix /api/v1/finance).
+servers:
+  - url: http://localhost:8080/api/v1/finance
+paths:
+  /v1/chart-of-accounts:
+    get:
+      summary: List chart of accounts
+      tags: [Ledger]
+    post:
+      summary: Create chart account
+      tags: [Ledger]
+  /v1/ledger/entries:
+    get:
+      summary: List journal entries
+      tags: [Ledger]
+    post:
+      summary: Create draft journal entry
+      tags: [Ledger]
+  /v1/ar/items:
+    get:
+      summary: List AR open items
+      tags: [AR]
+    post:
+      summary: Create AR open item
+      tags: [AR]
+  /v1/ar/items/{id}/payments:
+    get:
+      summary: List payments for AR item
+      tags: [AR]
+    post:
+      summary: Apply AR payment (cash receipt)
+      tags: [AR]
+  /v1/ap/items:
+    get:
+      summary: List AP open items
+      tags: [AP]
+    post:
+      summary: Create AP open item
+      tags: [AP]
+  /v1/ap/items/{id}/payments:
+    get:
+      summary: List payments for AP item
+      tags: [AP]
+    post:
+      summary: Apply AP payment (disbursement)
+      tags: [AP]
+  /v1/reports/trial-balance:
+    get:
+      summary: Trial balance
+      tags: [Reports]
+  /v1/reports/ar-aging:
+    get:
+      summary: AR aging buckets
+      tags: [Reports]
+  /v1/reports/profit-and-loss:
+    get:
+      summary: Profit and loss
+      tags: [Reports]
+  /v1/reports/balance-sheet:
+    get:
+      summary: Balance sheet
+      tags: [Reports]
+  /v1/finance/summary:
+    get:
+      summary: AR summary for BFF consumers
+      tags: [Reports]
+  /v1/invoices:
+    get:
+      summary: List invoices (legacy shape)
+      tags: [Invoices]
+    post:
+      summary: Create invoice
+      tags: [Invoices]
+  /v1/invoices/funnel:
+    get:
+      summary: Sales funnel metrics
+      tags: [Invoices]
+  /v1/invoices/{no}:
+    get:
+      summary: Get invoice by number
+      tags: [Invoices]
+    patch:
+      summary: Update invoice
+      tags: [Invoices]
+    delete:
+      summary: Delete open invoice
+      tags: [Invoices]
+  /v1/banking/accounts:
+    get:
+      summary: List bank accounts
+      tags: [Banking]
+  /v1/banking/transactions:
+    get:
+      summary: List bank transactions
+      tags: [Banking]
+  /v1/integrations/banking/sync:
+    post:
+      summary: Sync bank feed from HTTP adapter
+      tags: [Integrations]
+  /v1/integrations/ura-efris:
+    get:
+      summary: EFRIS integration status
+      tags: [Integrations]
+  /v1/integrations/ura-efris/submit:
+    post:
+      summary: Queue EFRIS submission
+      tags: [Integrations]
+  /v1/integrations/banking:
+    get:
+      summary: Banking integration status
+      tags: [Integrations]
+  /v1/integrations/banking/statements:
+    post:
+      summary: Import bank statement metadata
+      tags: [Integrations]

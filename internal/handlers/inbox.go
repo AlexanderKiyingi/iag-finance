@@ -5,12 +5,11 @@ import (
 	"strconv"
 
 	"github.com/gin-gonic/gin"
-	"github.com/iag-finance/backend/internal/tenant"
 	"github.com/alvor-technologies/iag-platform-go/apierr"
 )
 
 func (a *API) ListBankAccounts(c *gin.Context) {
-	items, err := a.Ledger.ListBankAccounts(c.Request.Context(), tenant.FromGin(c))
+	items, err := a.Ledger.ListBankAccounts(c.Request.Context())
 	if err != nil {
 		apierr.JSONStatus(c, http.StatusInternalServerError, "could not list bank accounts")
 		return
@@ -30,7 +29,7 @@ func (a *API) ListAPInbox(c *gin.Context) {
 
 func (a *API) ListCherryIntake(c *gin.Context) {
 	limit, _ := strconv.Atoi(c.DefaultQuery("limit", "50"))
-	items, err := a.Ledger.ListCherryIntake(c.Request.Context(), tenant.FromGin(c), limit)
+	items, err := a.Ledger.ListCherryIntake(c.Request.Context(), limit)
 	if err != nil {
 		apierr.JSONStatus(c, http.StatusInternalServerError, "could not list cherry intake")
 		return

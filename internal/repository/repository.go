@@ -309,7 +309,7 @@ func (r *Repository) ListAROpenItems(ctx context.Context, limit, offset int) ([]
 		limit = 50
 	}
 	rows, err := r.pool.Query(ctx, `
-		SELECT id, customer_ref, document_ref, description, amount::text, currency, due_date, status, journal_entry_id, source_event_id, created_at, updated_at
+		SELECT id, customer_ref, document_ref, description, amount::text, amount_paid::text, currency, due_date, status, journal_entry_id, source_event_id, created_at, updated_at
 		FROM ar_open_items
 		ORDER BY created_at DESC
 		LIMIT $1 OFFSET $2
@@ -326,7 +326,7 @@ func (r *Repository) ListAPOpenItems(ctx context.Context, limit, offset int) ([]
 		limit = 50
 	}
 	rows, err := r.pool.Query(ctx, `
-		SELECT id, vendor_ref, document_ref, description, amount::text, currency, due_date, status, journal_entry_id, source_event_id, created_at, updated_at
+		SELECT id, vendor_ref, document_ref, description, amount::text, amount_paid::text, currency, due_date, status, journal_entry_id, source_event_id, party_id, created_at, updated_at
 		FROM ap_open_items
 		ORDER BY created_at DESC
 		LIMIT $1 OFFSET $2
@@ -343,7 +343,7 @@ func (r *Repository) ListAPByPartyID(ctx context.Context, partyID uuid.UUID, lim
 		limit = 50
 	}
 	rows, err := r.pool.Query(ctx, `
-		SELECT id, vendor_ref, document_ref, description, amount::text, currency, due_date, status, journal_entry_id, source_event_id, created_at, updated_at
+		SELECT id, vendor_ref, document_ref, description, amount::text, amount_paid::text, currency, due_date, status, journal_entry_id, source_event_id, party_id, created_at, updated_at
 		FROM ap_open_items
 		WHERE party_id = $1
 		ORDER BY due_date DESC NULLS LAST
@@ -360,7 +360,11 @@ func scanARItems(rows pgx.Rows) ([]domain.AROpenItem, error) {
 	var items []domain.AROpenItem
 	for rows.Next() {
 		var i domain.AROpenItem
-		if err := rows.Scan(&i.ID, &i.CustomerRef, &i.DocumentRef, &i.Description, &i.Amount, &i.Currency, &i.DueDate, &i.Status, &i.JournalEntryID, &i.SourceEventID, &i.CreatedAt, &i.UpdatedAt); err != nil {
+		if err := rows.Scan(
+			&i.ID, &i.CustomerRef, &i.DocumentRef, &i.Description, &i.Amount, &i.AmountPaid,
+			&i.Currency, &i.DueDate, &i.Status, &i.JournalEntryID, &i.SourceEventID,
+			&i.CreatedAt, &i.UpdatedAt,
+		); err != nil {
 			return nil, err
 		}
 		items = append(items, i)
@@ -372,7 +376,11 @@ func scanAPItems(rows pgx.Rows) ([]domain.APOpenItem, error) {
 	var items []domain.APOpenItem
 	for rows.Next() {
 		var i domain.APOpenItem
-		if err := rows.Scan(&i.ID, &i.VendorRef, &i.DocumentRef, &i.Description, &i.Amount, &i.Currency, &i.DueDate, &i.Status, &i.JournalEntryID, &i.SourceEventID, &i.CreatedAt, &i.UpdatedAt); err != nil {
+		if err := rows.Scan(
+			&i.ID, &i.VendorRef, &i.DocumentRef, &i.Description, &i.Amount, &i.AmountPaid,
+			&i.Currency, &i.DueDate, &i.Status, &i.JournalEntryID, &i.SourceEventID, &i.PartyID,
+			&i.CreatedAt, &i.UpdatedAt,
+		); err != nil {
 			return nil, err
 		}
 		items = append(items, i)
@@ -384,11 +392,15 @@ func (r *Repository) CreateAROpenItem(ctx context.Context, customerRef, document
 	row := r.pool.QueryRow(ctx, `
 		INSERT INTO ar_open_items (customer_ref, document_ref, description, amount, currency, due_date, journal_entry_id, source_event_id)
 		VALUES ($1, $2, $3, $4::numeric, $5, $6, $7, $8)
-		RETURNING id, customer_ref, document_ref, description, amount::text, currency, due_date, status, journal_entry_id, source_event_id, created_at, updated_at
+		RETURNING id, customer_ref, document_ref, description, amount::text, amount_paid::text, currency, due_date, status, journal_entry_id, source_event_id, created_at, updated_at
 	`, customerRef, documentRef, description, amount, currency, dueDate, journalEntryID, sourceEventID)
 
 	var i domain.AROpenItem
-	if err := row.Scan(&i.ID, &i.CustomerRef, &i.DocumentRef, &i.Description, &i.Amount, &i.Currency, &i.DueDate, &i.Status, &i.JournalEntryID, &i.SourceEventID, &i.CreatedAt, &i.UpdatedAt); err != nil {
+	if err := row.Scan(
+		&i.ID, &i.CustomerRef, &i.DocumentRef, &i.Description, &i.Amount, &i.AmountPaid,
+		&i.Currency, &i.DueDate, &i.Status, &i.JournalEntryID, &i.SourceEventID,
+		&i.CreatedAt, &i.UpdatedAt,
+	); err != nil {
 		return nil, err
 	}
 	return &i, nil
@@ -398,11 +410,15 @@ func (r *Repository) CreateAPOpenItem(ctx context.Context, vendorRef, documentRe
 	row := r.pool.QueryRow(ctx, `
 		INSERT INTO ap_open_items (vendor_ref, document_ref, description, amount, currency, due_date, journal_entry_id, source_event_id)
 		VALUES ($1, $2, $3, $4::numeric, $5, $6, $7, $8)
-		RETURNING id, vendor_ref, document_ref, description, amount::text, currency, due_date, status, journal_entry_id, source_event_id, created_at, updated_at
+		RETURNING id, vendor_ref, document_ref, description, amount::text, amount_paid::text, currency, due_date, status, journal_entry_id, source_event_id, party_id, created_at, updated_at
 	`, vendorRef, documentRef, description, amount, currency, dueDate, journalEntryID, sourceEventID)
 
 	var i domain.APOpenItem
-	if err := row.Scan(&i.ID, &i.VendorRef, &i.DocumentRef, &i.Description, &i.Amount, &i.Currency, &i.DueDate, &i.Status, &i.JournalEntryID, &i.SourceEventID, &i.CreatedAt, &i.UpdatedAt); err != nil {
+	if err := row.Scan(
+		&i.ID, &i.VendorRef, &i.DocumentRef, &i.Description, &i.Amount, &i.AmountPaid,
+		&i.Currency, &i.DueDate, &i.Status, &i.JournalEntryID, &i.SourceEventID, &i.PartyID,
+		&i.CreatedAt, &i.UpdatedAt,
+	); err != nil {
 		return nil, err
 	}
 	return &i, nil

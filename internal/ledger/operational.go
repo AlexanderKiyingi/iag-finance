@@ -6,10 +6,10 @@ import (
 	"github.com/iag-finance/backend/internal/domain"
 )
 
-func (s *Service) ListBankAccounts(ctx context.Context, tenant string) ([]domain.BankAccount, error) {
-	return s.repo.ListBankAccounts(ctx, tenant)
+func (s *Service) ListBankAccounts(ctx context.Context) ([]domain.BankAccount, error) {
+	return s.repo.ListBankAccounts(ctx)
 }
 
-func (s *Service) ListCherryIntake(ctx context.Context, tenant string, limit int) ([]domain.CherryIntakeLine, error) {
-	return s.repo.ListCherryIntake(ctx, tenant, limit)
+func (s *Service) ListCherryIntake(ctx context.Context, limit int) ([]domain.CherryIntakeLine, error) {
+	return s.repo.ListCherryIntake(ctx, limit)
 }

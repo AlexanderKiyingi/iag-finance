@@ -85,12 +85,52 @@ func (s *Service) CreateARItem(ctx context.Context, customerRef, documentRef, de
 	return s.repo.CreateAROpenItem(ctx, customerRef, documentRef, description, amount, currency, dueDate, nil, nil)
 }
 
+func (s *Service) CreateARItemWithBilling(ctx context.Context, customerRef, documentRef, description, amount, currency string, dueDate *time.Time, billingOrgID, billingIdentityID *uuid.UUID) (*domain.AROpenItem, error) {
+	return s.repo.CreateAROpenItemWithBilling(ctx, customerRef, documentRef, description, amount, currency, dueDate, billingOrgID, billingIdentityID)
+}
+
+func (s *Service) GetAROpenItemByID(ctx context.Context, id uuid.UUID) (*domain.AROpenItem, error) {
+	return s.repo.GetAROpenItem(ctx, id)
+}
+
 func (s *Service) CreateAPItem(ctx context.Context, vendorRef, documentRef, description, amount, currency string, dueDate *time.Time) (*domain.APOpenItem, error) {
 	return s.repo.CreateAPOpenItem(ctx, vendorRef, documentRef, description, amount, currency, dueDate, nil, nil)
 }
 
+// LinkARToJournal attaches a posted journal entry to an AR open item by document_ref.
+func (s *Service) LinkARToJournal(ctx context.Context, documentRef string, journalEntryID uuid.UUID, sourceEventID string) error {
+	if documentRef == "" {
+		return nil
+	}
+	return s.repo.LinkAROpenItemByDocumentRef(ctx, documentRef, journalEntryID, sourceEventID)
+}
+
+// LinkAPToJournal attaches a posted journal entry to an AP open item by document_ref.
+func (s *Service) LinkAPToJournal(ctx context.Context, documentRef string, journalEntryID uuid.UUID, sourceEventID string) error {
+	if documentRef == "" {
+		return nil
+	}
+	return s.repo.LinkAPOpenItemByDocumentRef(ctx, documentRef, journalEntryID, sourceEventID)
+}
+
 func (s *Service) TrialBalance(ctx context.Context) ([]repository.TrialBalanceRow, error) {
 	return s.repo.TrialBalance(ctx)
+}
+
+func (s *Service) ARAging(ctx context.Context) ([]repository.ARAgingBucket, error) {
+	return s.repo.ARAging(ctx)
+}
+
+func (s *Service) ProfitAndLoss(ctx context.Context) ([]repository.PLRow, error) {
+	return s.repo.ProfitAndLoss(ctx)
+}
+
+func (s *Service) BalanceSheet(ctx context.Context) ([]repository.BalanceSheetSection, error) {
+	return s.repo.BalanceSheet(ctx)
+}
+
+func (s *Service) FinanceSummary(ctx context.Context) (repository.FinanceSummary, error) {
+	return s.repo.FinanceSummary(ctx)
 }
 
 func (s *Service) CreateJournalEntry(ctx context.Context, in CreateEntryInput) (*domain.JournalEntry, error) {

@@ -13,7 +13,6 @@ import (
 	"github.com/iag-finance/backend/internal/db"
 	"github.com/iag-finance/backend/internal/ledger"
 	"github.com/iag-finance/backend/internal/tablerows"
-	"github.com/iag-finance/backend/internal/tenant"
 	"github.com/redis/go-redis/v9"
 	"github.com/alvor-technologies/iag-platform-go/apierr"
 )
@@ -73,7 +72,7 @@ func (h *Handlers) AppendAudit(c *gin.Context) {
 		apierr.JSONStatus(c, http.StatusBadRequest, err.Error())
 		return
 	}
-	ev, err := h.ChainAudit.Append(c.Request.Context(), tenant.FromGin(c), body)
+	ev, err := h.ChainAudit.Append(c.Request.Context(), body)
 	if err != nil {
 		apierr.JSONStatus(c, http.StatusInternalServerError, err.Error())
 		return
@@ -83,7 +82,7 @@ func (h *Handlers) AppendAudit(c *gin.Context) {
 
 func (h *Handlers) ListAudit(c *gin.Context) {
 	limit, _ := strconv.Atoi(c.Query("limit"))
-	list, err := h.ChainAudit.List(c.Request.Context(), tenant.FromGin(c), limit)
+	list, err := h.ChainAudit.List(c.Request.Context(), limit)
 	if err != nil {
 		apierr.JSONStatus(c, http.StatusInternalServerError, err.Error())
 		return
@@ -101,7 +100,7 @@ func (h *Handlers) ListTableRows(c *gin.Context) {
 		})
 		return
 	}
-	list, err := h.Tables.List(c.Request.Context(), tenant.FromGin(c), tableID)
+	list, err := h.Tables.List(c.Request.Context(), tableID)
 	if err != nil {
 		apierr.JSONStatus(c, http.StatusInternalServerError, err.Error())
 		return
@@ -115,7 +114,7 @@ func (h *Handlers) AppendTableRow(c *gin.Context) {
 		apierr.JSONStatus(c, http.StatusBadRequest, err.Error())
 		return
 	}
-	row, err := h.Tables.Append(c.Request.Context(), tenant.FromGin(c), c.Param("tableId"), body.RowHTML)
+	row, err := h.Tables.Append(c.Request.Context(), c.Param("tableId"), body.RowHTML)
 	if err != nil {
 		apierr.JSONStatus(c, http.StatusInternalServerError, err.Error())
 		return

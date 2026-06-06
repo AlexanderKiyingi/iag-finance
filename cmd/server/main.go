@@ -25,7 +25,9 @@ import (
 	"github.com/iag-finance/backend/internal/consumer"
 	"github.com/iag-finance/backend/internal/db"
 	"github.com/iag-finance/backend/internal/events"
+	"github.com/iag-finance/backend/internal/integrations"
 	"github.com/iag-finance/backend/internal/models"
+	"github.com/iag-finance/backend/internal/worker"
 	"github.com/iag-finance/backend/internal/repository"
 )
 
@@ -75,15 +77,21 @@ func main() {
 	}
 
 	var eventBus *events.Bus
-	if cfg.EnableEventPublish && len(cfg.KafkaBrokers) > 0 {
+	if len(cfg.KafkaBrokers) > 0 {
 		eventBus = events.New(events.Config{
-			Brokers:  cfg.KafkaBrokers,
-			ClientID: cfg.KafkaClientID,
-			Topic:    cfg.KafkaTopic,
-			Enabled:  true,
+			Brokers:           cfg.KafkaBrokers,
+			ClientID:          cfg.KafkaClientID,
+			Topic:             cfg.KafkaTopic,
+			NotificationTopic: cfg.KafkaNotificationsTopic,
+			Enabled:           cfg.EnableEventPublish,
 		})
 		defer func() { _ = eventBus.Close() }()
-		slog.Info("finance event publisher enabled", "topic", cfg.KafkaTopic)
+		if cfg.EnableEventPublish {
+			slog.Info("finance event publisher enabled", "topic", cfg.KafkaTopic)
+		}
+		if eventBus.NotificationsEnabled() {
+			slog.Info("finance notification publisher enabled", "topic", cfg.KafkaNotificationsTopic)
+		}
 	}
 
 	if cfg.SeedOnStartup {
@@ -120,15 +128,22 @@ func main() {
 	}
 	verifier.StartRefreshLoop(ctx, 15*time.Minute)
 
+	integ := integrations.NewRegistry(cfg)
+
 	router := api.NewRouter(api.RouterDeps{
-		Config:   cfg,
-		Pool:     pool,
-		Redis:    rdb,
-		Verifier: verifier,
-		Ledger:   ledgerSvc,
-		AuditLog: auditSvc,
-		Events:   eventBus,
+		Config:       cfg,
+		Pool:         pool,
+		Redis:        rdb,
+		Verifier:     verifier,
+		Ledger:       ledgerSvc,
+		AuditLog:     auditSvc,
+		Events:       eventBus,
+		Integrations: integ,
 	})
+
+	if cfg.OverdueCronEnabled {
+		go worker.NewOverdueNotifier(cfg, ledgerSvc, eventBus).Run(ctx)
+	}
 
 	// Shared producer used for the DLQ. Re-used by both the iag.finance and
 	// iag.fleet consumers below so we don't carry two Kafka writer fleets.
@@ -180,6 +195,18 @@ func main() {
 			log.Fatal("finance supply-chain consumer: ", err)
 		}
 		consumers = append(consumers, c3)
+
+		// Quaternary: iag.commercial — procurement.invoice.received → AP inbox.
+		c4, err := consumer.NewProcurement(consumer.Config{
+			Brokers:  cfg.KafkaBrokers,
+			GroupID:  "iag.finance.commercial",
+			Topic:    cfg.KafkaCommercialTopic,
+			DLQTopic: cfg.KafkaDLQTopic,
+		}, ledgerSvc, eventBus, dlqProducer)
+		if err != nil {
+			log.Fatal("finance procurement consumer: ", err)
+		}
+		consumers = append(consumers, c4)
 
 		for _, c := range consumers {
 			c := c

@@ -13,13 +13,13 @@ import (
 )
 
 type Event struct {
-	ID       int64     `json:"id"`
-	Ts       time.Time `json:"ts"`
-	Actor    string    `json:"actor"`
-	EventType string   `json:"type"`
-	Message  string    `json:"message"`
-	PrevHash string    `json:"prevHash"`
-	Hash     string    `json:"hash"`
+	ID        int64     `json:"id"`
+	Ts        time.Time `json:"ts"`
+	Actor     string    `json:"actor"`
+	EventType string    `json:"type"`
+	Message   string    `json:"message"`
+	PrevHash  string    `json:"prevHash"`
+	Hash      string    `json:"hash"`
 }
 
 type AppendInput struct {
@@ -33,15 +33,15 @@ type Store struct {
 	Redis *redis.Client
 }
 
-func cacheKey(tenant string) string {
-	return "iag:audit:" + tenant
+const cacheKey = "iag:finance:audit"
+
+func (s *Store) Invalidate(ctx context.Context) {
+	if s.Redis != nil {
+		_ = s.Redis.Del(ctx, cacheKey).Err()
+	}
 }
 
-func (s *Store) Invalidate(ctx context.Context, tenant string) {
-	_ = s.Redis.Del(ctx, cacheKey(tenant)).Err()
-}
-
-func (s *Store) Append(ctx context.Context, tenant string, in AppendInput) (*Event, error) {
+func (s *Store) Append(ctx context.Context, in AppendInput) (*Event, error) {
 	tx, err := s.Pg.Begin(ctx)
 	if err != nil {
 		return nil, err
@@ -50,8 +50,8 @@ func (s *Store) Append(ctx context.Context, tenant string, in AppendInput) (*Eve
 
 	var prevHash string
 	err = tx.QueryRow(ctx, `
-		SELECT event_hash FROM audit_events WHERE tenant_id = $1 ORDER BY id DESC LIMIT 1
-	`, tenant).Scan(&prevHash)
+		SELECT event_hash FROM audit_events ORDER BY id DESC LIMIT 1
+	`).Scan(&prevHash)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			prevHash = "GENESIS"
@@ -66,30 +66,29 @@ func (s *Store) Append(ctx context.Context, tenant string, in AppendInput) (*Eve
 
 	var id int64
 	err = tx.QueryRow(ctx, `
-		INSERT INTO audit_events (tenant_id, occurred_at, actor, event_type, message, prev_hash, event_hash)
-		VALUES ($1, $2, $3, $4, $5, $6, $7)
+		INSERT INTO audit_events (occurred_at, actor, event_type, message, prev_hash, event_hash)
+		VALUES ($1, $2, $3, $4, $5, $6)
 		RETURNING id
-	`, tenant, ts, in.Actor, in.Type, in.Message, prevHash, h).Scan(&id)
+	`, ts, in.Actor, in.Type, in.Message, prevHash, h).Scan(&id)
 	if err != nil {
 		return nil, err
 	}
 	if err := tx.Commit(ctx); err != nil {
 		return nil, err
 	}
-	s.Invalidate(ctx, tenant)
+	s.Invalidate(ctx)
 	return &Event{
 		ID: id, Ts: ts, Actor: in.Actor, EventType: in.Type, Message: in.Message,
 		PrevHash: prevHash, Hash: h,
 	}, nil
 }
 
-func (s *Store) List(ctx context.Context, tenant string, limit int) ([]Event, error) {
+func (s *Store) List(ctx context.Context, limit int) ([]Event, error) {
 	if limit <= 0 || limit > 500 {
 		limit = 250
 	}
-	key := cacheKey(tenant)
 	if s.Redis != nil {
-		if raw, err := s.Redis.Get(ctx, key).Bytes(); err == nil && len(raw) > 0 {
+		if raw, err := s.Redis.Get(ctx, cacheKey).Bytes(); err == nil && len(raw) > 0 {
 			var cached []Event
 			if json.Unmarshal(raw, &cached) == nil && len(cached) > 0 {
 				return cached, nil
@@ -102,12 +101,11 @@ func (s *Store) List(ctx context.Context, tenant string, limit int) ([]Event, er
 		FROM (
 			SELECT id, occurred_at, actor, event_type, message, prev_hash, event_hash
 			FROM audit_events
-			WHERE tenant_id = $1
 			ORDER BY id DESC
-			LIMIT $2
+			LIMIT $1
 		) AS tail
 		ORDER BY id ASC
-	`, tenant, limit)
+	`, limit)
 	if err != nil {
 		return nil, err
 	}
@@ -127,7 +125,7 @@ func (s *Store) List(ctx context.Context, tenant string, limit int) ([]Event, er
 
 	if s.Redis != nil && len(list) > 0 {
 		if b, err := json.Marshal(list); err == nil {
-			_ = s.Redis.Set(ctx, key, b, 20*time.Second).Err()
+			_ = s.Redis.Set(ctx, cacheKey, b, 20*time.Second).Err()
 		}
 	}
 	return list, nil

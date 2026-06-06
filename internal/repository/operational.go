@@ -6,13 +6,12 @@ import (
 	"github.com/iag-finance/backend/internal/domain"
 )
 
-func (r *Repository) ListBankAccounts(ctx context.Context, tenant string) ([]domain.BankAccount, error) {
+func (r *Repository) ListBankAccounts(ctx context.Context) ([]domain.BankAccount, error) {
 	rows, err := r.pool.Query(ctx, `
 		SELECT id, code, name, institution, currency, balance::text, status_label, purpose, created_at, updated_at
 		FROM bank_accounts
-		WHERE tenant_id = $1
 		ORDER BY code
-	`, tenant)
+	`)
 	if err != nil {
 		return nil, err
 	}
@@ -28,17 +27,16 @@ func (r *Repository) ListBankAccounts(ctx context.Context, tenant string) ([]dom
 	return out, rows.Err()
 }
 
-func (r *Repository) ListCherryIntake(ctx context.Context, tenant string, limit int) ([]domain.CherryIntakeLine, error) {
+func (r *Repository) ListCherryIntake(ctx context.Context, limit int) ([]domain.CherryIntakeLine, error) {
 	if limit <= 0 || limit > 200 {
 		limit = 50
 	}
 	rows, err := r.pool.Query(ctx, `
 		SELECT id, intake_code, farmer_name, qty_kg::text, amount_ugx::text, status_label, created_at, updated_at
 		FROM cherry_intake_lines
-		WHERE tenant_id = $1
 		ORDER BY created_at DESC
-		LIMIT $2
-	`, tenant, limit)
+		LIMIT $1
+	`, limit)
 	if err != nil {
 		return nil, err
 	}

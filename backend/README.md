@@ -1,6 +1,12 @@
-# IAG Finance API (Go + Gin)
+# DEPRECATED — legacy finance prototype
 
-Production-oriented REST API for the **finance** Next.js app. Routes mirror `finance/lib/fin/api/endpoints.ts`.
+> **Do not use.** See [`DEPRECATED.md`](DEPRECATED.md). Production finance is [`../cmd/server`](../cmd/server).
+
+---
+
+# IAG Finance API (Go + Gin) — legacy
+
+Early REST prototype for a finance Next.js app. Routes mirror `finance/lib/fin/api/endpoints.ts`.
 
 ## Quick start (file persistence)
 

@@ -247,10 +247,6 @@ Existing SCM permissions (`finance.view_farmerpayment`) stay on supply-chain rou
 
 Default groups: add codenames to **Finance** group in auth seed (parallel to SCM `Finance` group).
 
-### 3.6 Tenant header
-
-Keep `X-IAG-Tenant` for multi-org; later derive default tenant from JWT claims (`org_id`) when authentication adds it.
-
 ---
 
 ## Phase 4 — Inter-service behavior
@@ -334,10 +330,10 @@ Introduce normalized tables; keep `table_rows` as read-only legacy or drop after
 
 ### Wave C — product split (ongoing)
 
-- [ ] Move URA/banking stubs from accounts → finance handlers
-- [ ] Kafka producer for finance workflow events
-- [ ] Normalized schema; deprecate `table_rows` HTML storage
-- [ ] `docs/planning/SHARED_SERVICES.md` row for Finance service #8
+- [x] Move URA/banking stubs from accounts → finance handlers
+- [x] Kafka producer for finance workflow events (`notification.requested`, `finance.*`)
+- [x] Normalized schema; deprecate `table_rows` HTML storage (inbox APIs + 410 on `seed_*`)
+- [x] `docs/planning/SHARED_SERVICES.md` row for Finance service #8
 
 ---
 

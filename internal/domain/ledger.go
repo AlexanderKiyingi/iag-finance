@@ -62,6 +62,7 @@ type AROpenItem struct {
 	DocumentRef    string     `json:"documentRef"`
 	Description    string     `json:"description"`
 	Amount         string     `json:"amount"`
+	AmountPaid     string     `json:"amountPaid"`
 	Currency       string     `json:"currency"`
 	DueDate        *time.Time `json:"dueDate,omitempty"`
 	Status         string     `json:"status"`
@@ -77,11 +78,39 @@ type APOpenItem struct {
 	DocumentRef    string     `json:"documentRef"`
 	Description    string     `json:"description"`
 	Amount         string     `json:"amount"`
+	AmountPaid     string     `json:"amountPaid"`
 	Currency       string     `json:"currency"`
 	DueDate        *time.Time `json:"dueDate,omitempty"`
 	Status         string     `json:"status"`
 	JournalEntryID *uuid.UUID `json:"journalEntryId,omitempty"`
 	SourceEventID  *string    `json:"sourceEventId,omitempty"`
+	PartyID        *uuid.UUID `json:"partyId,omitempty"`
 	CreatedAt      time.Time  `json:"createdAt"`
 	UpdatedAt      time.Time  `json:"updatedAt"`
+}
+
+type Payment struct {
+	ID             uuid.UUID  `json:"id"`
+	Direction      string     `json:"direction"`
+	OpenItemID     uuid.UUID  `json:"openItemId"`
+	Amount         string     `json:"amount"`
+	Currency       string     `json:"currency"`
+	PaymentRef     string     `json:"paymentRef"`
+	JournalEntryID *uuid.UUID `json:"journalEntryId,omitempty"`
+	CreatedAt      time.Time  `json:"createdAt"`
+}
+
+type Adjustment struct {
+	ID                  uuid.UUID  `json:"id"`
+	Kind                string     `json:"kind"`
+	Direction           string     `json:"direction"`
+	OriginalDocumentRef string     `json:"originalDocumentRef"`
+	DocumentRef         string     `json:"documentRef"`
+	PartyRef            string     `json:"partyRef"`
+	Amount              string     `json:"amount"`
+	Currency            string     `json:"currency"`
+	Reason              string     `json:"reason"`
+	Status              string     `json:"status"`
+	JournalEntryID      *uuid.UUID `json:"journalEntryId,omitempty"`
+	CreatedAt           time.Time  `json:"createdAt"`
 }

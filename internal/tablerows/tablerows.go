@@ -8,10 +8,10 @@ import (
 )
 
 type Row struct {
-	ID       int64     `json:"id"`
-	TableID  string    `json:"tableId"`
-	RowHTML  string    `json:"rowHTML"`
-	Created  time.Time `json:"ts"`
+	ID      int64     `json:"id"`
+	TableID string    `json:"tableId"`
+	RowHTML string    `json:"rowHTML"`
+	Created time.Time `json:"ts"`
 }
 
 type AppendBody struct {
@@ -22,13 +22,13 @@ type Store struct {
 	Pg *pgxpool.Pool
 }
 
-func (s *Store) List(ctx context.Context, tenant, tableID string) ([]Row, error) {
+func (s *Store) List(ctx context.Context, tableID string) ([]Row, error) {
 	rows, err := s.Pg.Query(ctx, `
 		SELECT id, table_id, row_html, created_at
 		FROM table_rows
-		WHERE tenant_id = $1 AND table_id = $2
+		WHERE table_id = $1
 		ORDER BY id ASC
-	`, tenant, tableID)
+	`, tableID)
 	if err != nil {
 		return nil, err
 	}
@@ -45,13 +45,13 @@ func (s *Store) List(ctx context.Context, tenant, tableID string) ([]Row, error)
 	return out, rows.Err()
 }
 
-func (s *Store) Append(ctx context.Context, tenant, tableID, rowHTML string) (*Row, error) {
+func (s *Store) Append(ctx context.Context, tableID, rowHTML string) (*Row, error) {
 	var r Row
 	err := s.Pg.QueryRow(ctx, `
-		INSERT INTO table_rows (tenant_id, table_id, row_html)
-		VALUES ($1, $2, $3)
+		INSERT INTO table_rows (table_id, row_html)
+		VALUES ($1, $2)
 		RETURNING id, table_id, row_html, created_at
-	`, tenant, tableID, rowHTML).Scan(&r.ID, &r.TableID, &r.RowHTML, &r.Created)
+	`, tableID, rowHTML).Scan(&r.ID, &r.TableID, &r.RowHTML, &r.Created)
 	if err != nil {
 		return nil, err
 	}

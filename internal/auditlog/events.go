@@ -9,4 +9,6 @@ const (
 	EventJournalCreated      = "journal_entry.created"
 	EventJournalPosted       = "journal_entry.posted"
 	EventJournalBookedEvent  = "journal_entry.booked_from_event"
+	EventARPayment           = "ar_open_item.payment_applied"
+	EventAPPayment           = "ap_open_item.payment_applied"
 )

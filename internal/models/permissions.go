@@ -14,5 +14,6 @@ func PermissionDescriptors() []PermissionDescriptor {
 		{Name: "finance.view_operations", Description: "View finance ops audit, inboxes, and prototype table rows"},
 		{Name: "finance.change_operations", Description: "Append finance ops audit events and table rows"},
 		{Name: "finance.view_own_ap", Description: "View own accounts-payable lines (vendor portal)"},
+		{Name: "finance.view_own_payment", Description: "View own payment history (vendor portal)"},
 	}
 }

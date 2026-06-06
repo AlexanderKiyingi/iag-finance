@@ -121,6 +121,7 @@ func (h *financeHandler) handleSaleCompleted(ctx context.Context, env platformev
 	})
 	if err == nil {
 		h.logBooked(ctx, env, entry)
+		h.linkOpenItem(ctx, env.Type, data.DocumentRef, entry, env.ID)
 	}
 	return err
 }
@@ -144,6 +145,7 @@ func (h *financeHandler) handleInvoicePosted(ctx context.Context, env platformev
 	})
 	if err == nil {
 		h.logBooked(ctx, env, entry)
+		h.linkOpenItem(ctx, env.Type, data.DocumentRef, entry, env.ID)
 	}
 	return err
 }
@@ -170,8 +172,25 @@ func (h *financeHandler) handleFleetFuelRecorded(ctx context.Context, env platfo
 	})
 	if err == nil {
 		h.logBooked(ctx, env, entry)
+		h.linkOpenItem(ctx, env.Type, data.DocumentRef, entry, env.ID)
 	}
 	return err
+}
+
+func (h *financeHandler) linkOpenItem(ctx context.Context, eventType, documentRef string, entry *domain.JournalEntry, eventID string) {
+	if entry == nil || documentRef == "" {
+		return
+	}
+	switch eventType {
+	case "sale.completed":
+		if err := h.ledger.LinkARToJournal(ctx, documentRef, entry.ID, eventID); err != nil {
+			slog.Warn("finance AR link failed", "documentRef", documentRef, "err", err)
+		}
+	case "invoice.posted", "fleet.fuel.recorded":
+		if err := h.ledger.LinkAPToJournal(ctx, documentRef, entry.ID, eventID); err != nil {
+			slog.Warn("finance AP link failed", "documentRef", documentRef, "err", err)
+		}
+	}
 }
 
 func (h *financeHandler) logBooked(ctx context.Context, env platformevents.Envelope, entry *domain.JournalEntry) {
