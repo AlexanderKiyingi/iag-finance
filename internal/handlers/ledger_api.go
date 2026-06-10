@@ -17,6 +17,7 @@ import (
 	"github.com/iag-finance/backend/internal/events"
 	"github.com/iag-finance/backend/internal/integrations"
 	"github.com/iag-finance/backend/internal/ledger"
+	"github.com/iag-finance/backend/internal/repository"
 	"github.com/iag-finance/backend/internal/usersclient"
 	"github.com/alvor-technologies/iag-platform-go/apierr"
 )
@@ -34,6 +35,7 @@ type API struct {
 	Integrations    *integrations.Registry
 	Cfg             config.Config
 	Users           *usersclient.Client
+	Repo            *repository.Repository
 }
 
 func (a *API) Health(c *gin.Context) {

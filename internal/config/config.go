@@ -31,7 +31,8 @@ type Config struct {
 	KafkaGroupID      string
 	KafkaTopic            string
 	KafkaSupplyChainTopic string
-	KafkaCommercialTopic  string
+	KafkaCommercialTopic    string
+	KafkaOperationsTopic    string
 	KafkaNotificationsTopic string
 	KafkaDLQTopic         string
 	ShutdownTimeout   time.Duration
@@ -136,6 +137,7 @@ func Load() (Config, error) {
 		KafkaTopic:            getEnv("KAFKA_FINANCE_TOPIC", "iag.finance"),
 		KafkaSupplyChainTopic:   getEnv("KAFKA_SUPPLY_CHAIN_TOPIC", "iag.supply-chain"),
 		KafkaCommercialTopic:    getEnv("KAFKA_COMMERCIAL_TOPIC", "iag.commercial"),
+		KafkaOperationsTopic:  getEnv("KAFKA_OPERATIONS_TOPIC", "iag.operations"),
 		KafkaNotificationsTopic: getEnv("KAFKA_NOTIFICATIONS_TOPIC", "iag.notifications"),
 		KafkaDLQTopic:           getEnv("KAFKA_DLQ_TOPIC", "iag.finance.dlq"),
 		ShutdownTimeout:     time.Duration(shutdownSec) * time.Second,

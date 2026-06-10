@@ -72,6 +72,7 @@ func NewRouter(deps RouterDeps) *gin.Engine {
 		Integrations:    deps.Integrations,
 		Cfg:             deps.Config,
 		Users:           users,
+		Repo:            repository.New(deps.Pool),
 	}
 
 	router.GET("/health", ops.Health)
@@ -137,6 +138,9 @@ func NewRouter(deps RouterDeps) *gin.Engine {
 		v1.GET("/inbox/bank-accounts", opsRead, api.ListBankAccounts)
 		v1.GET("/inbox/ap", opsRead, api.ListAPInbox)
 		v1.GET("/inbox/cherry-intake", opsRead, api.ListCherryIntake)
+
+		v1.GET("/payroll/employees", opsRead, api.ListPayrollEmployees)
+		v1.GET("/payroll/leave-accruals", opsRead, api.ListPayrollLeaveAccruals)
 
 		v1.GET("/portal/me", middleware.RequirePortalAP(), api.PortalMe)
 		v1.GET("/portal/ap", middleware.RequirePortalAP(), api.PortalAP)

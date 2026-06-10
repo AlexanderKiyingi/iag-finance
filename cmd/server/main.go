@@ -208,6 +208,18 @@ func main() {
 		}
 		consumers = append(consumers, c4)
 
+		// Quinary: iag.operations — iag-erp HR events → payroll employee/leave mirror.
+		c5, err := consumer.NewERP(consumer.Config{
+			Brokers:  cfg.KafkaBrokers,
+			GroupID:  "iag.finance.erp",
+			Topic:    cfg.KafkaOperationsTopic,
+			DLQTopic: cfg.KafkaDLQTopic,
+		}, repo, dlqProducer)
+		if err != nil {
+			log.Fatal("finance erp consumer: ", err)
+		}
+		consumers = append(consumers, c5)
+
 		for _, c := range consumers {
 			c := c
 			go func() {

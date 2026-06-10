@@ -76,6 +76,12 @@ Via gateway: `http://localhost:8080/api/v1/finance/v1/...`
 | `iag.fleet` | `iag.finance.fleet` | `fleet.fuel.recorded` |
 | `iag.supply-chain` | `iag.finance.supply-chain` | `scm.party.created`, `scm.party.updated` (AP `party_id` backfill) |
 | `iag.commercial` | `iag.finance.commercial` | `procurement.invoice.received` → AP inbox |
+| `iag.operations` | `iag.finance.erp` | `erp.employee.*`, `erp.leave.*` → payroll mirror ([`docs/PAYROLL_ERP_BOUNDARY.md`](docs/PAYROLL_ERP_BOUNDARY.md)) |
+
+**Payroll prep APIs** (mirror from ERP events, not source of truth):
+
+- `GET /v1/payroll/employees`
+- `GET /v1/payroll/leave-accruals`
 
 **Producer** (`ENABLE_EVENT_PUBLISH=true`, default on when Kafka is configured):
 
