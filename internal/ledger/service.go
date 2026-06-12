@@ -19,6 +19,7 @@ var (
 	ErrInvalidStatus   = errors.New("invalid journal status transition")
 	ErrDuplicateEvent  = errors.New("source event already processed")
 	ErrAccountNotFound = errors.New("account not found")
+	ErrPeriodClosed    = errors.New("accounting period is closed")
 )
 
 type LineInput struct {
@@ -187,7 +188,34 @@ func (s *Service) PostJournalEntry(ctx context.Context, id uuid.UUID) (*domain.J
 	if err := validateEntryLines(entry.Lines); err != nil {
 		return nil, err
 	}
-	return s.repo.UpdateJournalStatus(ctx, id, "posted", time.Now().UTC())
+	// Period-close control: refuse to post into a month an operator has
+	// closed. Periods are open by default, so this only bites once a close
+	// has been issued. The posting date is "now" — when the entry hits the
+	// ledger — which is the date that determines the period.
+	postingDate := time.Now().UTC()
+	closed, err := s.repo.IsPeriodClosed(ctx, postingDate.Format("2006-01"))
+	if err != nil {
+		return nil, err
+	}
+	if closed {
+		return nil, ErrPeriodClosed
+	}
+	return s.repo.UpdateJournalStatus(ctx, id, "posted", postingDate)
+}
+
+// FiscalPeriods lists every period with an explicit open/closed status.
+func (s *Service) FiscalPeriods(ctx context.Context) ([]repository.FiscalPeriod, error) {
+	return s.repo.ListPeriods(ctx)
+}
+
+// ClosePeriod blocks further postings dated in 'YYYY-MM'.
+func (s *Service) ClosePeriod(ctx context.Context, period string, by *uuid.UUID) error {
+	return s.repo.SetPeriodStatus(ctx, period, "closed", by)
+}
+
+// ReopenPeriod lifts a close so postings into 'YYYY-MM' are allowed again.
+func (s *Service) ReopenPeriod(ctx context.Context, period string, by *uuid.UUID) error {
+	return s.repo.SetPeriodStatus(ctx, period, "open", by)
 }
 
 func (s *Service) BookFromEvent(ctx context.Context, eventID, eventType, source, correlationID, description string, lines []LineInput) (*domain.JournalEntry, error) {

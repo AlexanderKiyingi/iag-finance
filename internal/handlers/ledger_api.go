@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"net/http"
+	"regexp"
 	"strconv"
 	"time"
 
@@ -11,6 +12,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/shopspring/decimal"
 
+	"github.com/alvor-technologies/iag-platform-go/apierr"
 	"github.com/iag-finance/backend/internal/auditlog"
 	"github.com/iag-finance/backend/internal/config"
 	"github.com/iag-finance/backend/internal/domain"
@@ -19,7 +21,6 @@ import (
 	"github.com/iag-finance/backend/internal/ledger"
 	"github.com/iag-finance/backend/internal/repository"
 	"github.com/iag-finance/backend/internal/usersclient"
-	"github.com/alvor-technologies/iag-platform-go/apierr"
 )
 
 type HealthChecker interface {
@@ -207,7 +208,7 @@ func (a *API) PostJournalEntry(c *gin.Context) {
 	entry, err := a.Ledger.PostJournalEntry(c.Request.Context(), id)
 	if err != nil {
 		status := http.StatusBadRequest
-		if errors.Is(err, ledger.ErrInvalidStatus) || errors.Is(err, ledger.ErrUnbalancedEntry) {
+		if errors.Is(err, ledger.ErrInvalidStatus) || errors.Is(err, ledger.ErrUnbalancedEntry) || errors.Is(err, ledger.ErrPeriodClosed) {
 			status = http.StatusUnprocessableEntity
 		}
 		apierr.JSONStatus(c, status, err.Error())
@@ -216,6 +217,63 @@ func (a *API) PostJournalEntry(c *gin.Context) {
 	c.JSON(http.StatusOK, entry)
 	logBusinessEvent(c, a.Audit, auditlog.EventJournalPosted, "journal_entry", entry.ID.String(), http.StatusOK, map[string]any{
 		"entryNumber": entry.EntryNumber,
+	})
+}
+
+var periodRE = regexp.MustCompile(`^\d{4}-(0[1-9]|1[0-2])$`)
+
+// ListFiscalPeriods returns every period with an explicit open/closed status.
+// Periods absent from the list are open by default.
+func (a *API) ListFiscalPeriods(c *gin.Context) {
+	items, err := a.Ledger.FiscalPeriods(c.Request.Context())
+	if err != nil {
+		apierr.JSONStatus(c, http.StatusInternalServerError, "could not list periods")
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"items": items, "_note": "periods default to open; only closed/reopened periods appear here"})
+}
+
+// CloseFiscalPeriod blocks further postings dated in the given 'YYYY-MM'.
+func (a *API) CloseFiscalPeriod(c *gin.Context) {
+	a.setPeriodStatus(c, true)
+}
+
+// ReopenFiscalPeriod lifts a close so postings into the period are allowed again.
+func (a *API) ReopenFiscalPeriod(c *gin.Context) {
+	a.setPeriodStatus(c, false)
+}
+
+func (a *API) setPeriodStatus(c *gin.Context, close bool) {
+	period := c.Param("period")
+	if !periodRE.MatchString(period) {
+		apierr.JSONStatus(c, http.StatusBadRequest, "period must be in YYYY-MM format")
+		return
+	}
+	var by *uuid.UUID
+	if raw, ok := c.Get("userID"); ok {
+		if id, ok := raw.(uuid.UUID); ok {
+			by = &id
+		}
+	}
+	var err error
+	event := auditlog.EventFiscalPeriodReopened
+	if close {
+		err = a.Ledger.ClosePeriod(c.Request.Context(), period, by)
+		event = auditlog.EventFiscalPeriodClosed
+	} else {
+		err = a.Ledger.ReopenPeriod(c.Request.Context(), period, by)
+	}
+	if err != nil {
+		apierr.JSONStatus(c, http.StatusInternalServerError, "could not update period")
+		return
+	}
+	status := "open"
+	if close {
+		status = "closed"
+	}
+	c.JSON(http.StatusOK, gin.H{"period": period, "status": status})
+	logBusinessEvent(c, a.Audit, event, "fiscal_period", period, http.StatusOK, map[string]any{
+		"period": period, "status": status,
 	})
 }
 

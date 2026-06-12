@@ -94,6 +94,8 @@ func NewRouter(deps RouterDeps) *gin.Engine {
 		v1.GET("/integrations/banking/statements/:id/lines", ledgerRead, api.ListStatementLines)
 		v1.POST("/integrations/banking/statements/:id/reconcile/auto", ledgerWrite, api.AutoReconcileStatement)
 		v1.POST("/integrations/banking/lines/:lineId/match", ledgerWrite, api.MatchStatementLine)
+		v1.POST("/integrations/banking/lines/:lineId/confirm", ledgerWrite, api.ConfirmStatementLine)
+		v1.POST("/integrations/banking/lines/:lineId/reject", ledgerWrite, api.RejectStatementLine)
 		v1.POST("/integrations/banking/sync", ledgerWrite, api.SyncBankFeed)
 
 		// General ledger (accounting)
@@ -104,6 +106,9 @@ func NewRouter(deps RouterDeps) *gin.Engine {
 		v1.POST("/ledger/entries", ledgerWrite, api.CreateJournalEntry)
 		v1.POST("/ledger/entries/:id/post", ledgerWrite, api.PostJournalEntry)
 		v1.POST("/ledger/validate-posting", ledgerWrite, ops.ValidatePosting)
+		v1.GET("/ledger/periods", ledgerRead, api.ListFiscalPeriods)
+		v1.POST("/ledger/periods/:period/close", ledgerWrite, api.CloseFiscalPeriod)
+		v1.POST("/ledger/periods/:period/reopen", ledgerWrite, api.ReopenFiscalPeriod)
 		v1.GET("/reports/trial-balance", ledgerRead, api.TrialBalance)
 		v1.GET("/reports/ar-aging", ledgerRead, api.ARAging)
 		v1.GET("/reports/profit-and-loss", ledgerRead, api.ProfitAndLoss)
@@ -141,6 +146,8 @@ func NewRouter(deps RouterDeps) *gin.Engine {
 
 		v1.GET("/payroll/employees", opsRead, api.ListPayrollEmployees)
 		v1.GET("/payroll/leave-accruals", opsRead, api.ListPayrollLeaveAccruals)
+		v1.GET("/payroll/runs", ledgerRead, api.ListPayrollRuns)
+		v1.POST("/payroll/runs", ledgerWrite, api.PostPayrollRun)
 
 		v1.GET("/portal/me", middleware.RequirePortalAP(), api.PortalMe)
 		v1.GET("/portal/ap", middleware.RequirePortalAP(), api.PortalAP)
