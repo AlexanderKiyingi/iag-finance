@@ -106,6 +106,7 @@ SCM party events backfill `party_id` on `ap_open_items` where `vendor_ref` match
 
 ## Docs
 
+- [Frontend integration (Next.js)](./docs/FRONTEND_INTEGRATION.md) — env template: [docs/frontend.env.example](./docs/frontend.env.example)
 - [Platform integration](./docs/PLATFORM_INTEGRATION.md)
 - [Billing identity contract](./docs/BILLING_IDENTITY_CONTRACT.md)
 - [URA EFRIS](./docs/URA_EFRIS.md)
