@@ -120,9 +120,11 @@ func (r *Repository) InsertStatementLines(ctx context.Context, statementID uuid.
 }
 
 func (r *Repository) MaterializeBankTransactions(ctx context.Context, bankAccountCode string, statementID uuid.UUID) error {
+	// Skip lines with a draft ('proposed') match: those are pending human
+	// review and must not post to the bank ledger until confirmed.
 	rows, err := r.pool.Query(ctx, `
 		SELECT id, line_date, description, payee, amount::text, direction, matched_document_ref
-		FROM bank_statement_lines WHERE statement_id = $1
+		FROM bank_statement_lines WHERE statement_id = $1 AND match_status <> 'proposed'
 	`, statementID)
 	if err != nil {
 		return err

@@ -13,16 +13,16 @@ import (
 var ErrStatementLineNotFound = errors.New("statement line not found")
 
 type StatementLine struct {
-	ID                  uuid.UUID `json:"id"`
-	StatementID         uuid.UUID `json:"statementId"`
-	LineDate            string    `json:"lineDate"`
-	Description         string    `json:"description"`
-	Payee               string    `json:"payee"`
-	Amount              string    `json:"amount"`
-	Direction           string    `json:"direction"`
-	ExternalRef         string    `json:"externalRef,omitempty"`
-	MatchStatus         string    `json:"matchStatus"`
-	MatchedDocumentRef  string    `json:"matchedDocumentRef,omitempty"`
+	ID                 uuid.UUID `json:"id"`
+	StatementID        uuid.UUID `json:"statementId"`
+	LineDate           string    `json:"lineDate"`
+	Description        string    `json:"description"`
+	Payee              string    `json:"payee"`
+	Amount             string    `json:"amount"`
+	Direction          string    `json:"direction"`
+	ExternalRef        string    `json:"externalRef,omitempty"`
+	MatchStatus        string    `json:"matchStatus"`
+	MatchedDocumentRef string    `json:"matchedDocumentRef,omitempty"`
 }
 
 func (r *Repository) ListStatementLines(ctx context.Context, statementID uuid.UUID) ([]StatementLine, error) {
@@ -76,6 +76,65 @@ func (r *Repository) MatchStatementLine(ctx context.Context, lineID uuid.UUID, d
 		SET match_status = 'matched', matched_document_ref = $2
 		WHERE id = $1 AND match_status = 'unmatched'
 	`, lineID, documentRef)
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() == 0 {
+		return ErrStatementLineNotFound
+	}
+	return nil
+}
+
+// ProposeStatementLineMatch records a *draft* auto-match for human review. The
+// line stays out of the bank ledger (materialization skips 'proposed' lines)
+// until a reviewer confirms it.
+func (r *Repository) ProposeStatementLineMatch(ctx context.Context, lineID uuid.UUID, documentRef string) error {
+	tag, err := r.pool.Exec(ctx, `
+		UPDATE bank_statement_lines
+		SET match_status = 'proposed', matched_document_ref = $2
+		WHERE id = $1 AND match_status = 'unmatched'
+	`, lineID, documentRef)
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() == 0 {
+		return ErrStatementLineNotFound
+	}
+	return nil
+}
+
+// ConfirmStatementLineMatch promotes a proposed draft match to a confirmed
+// match and returns the line so the caller can materialize it. Only 'proposed'
+// lines are eligible — confirming anything else is a no-op (ErrStatementLineNotFound).
+func (r *Repository) ConfirmStatementLineMatch(ctx context.Context, lineID uuid.UUID) (*StatementLine, error) {
+	row := r.pool.QueryRow(ctx, `
+		UPDATE bank_statement_lines
+		SET match_status = 'matched'
+		WHERE id = $1 AND match_status = 'proposed'
+		RETURNING id, statement_id, line_date::text, description, payee, amount::text, direction,
+		          COALESCE(external_ref, ''), match_status, COALESCE(matched_document_ref, '')
+	`, lineID)
+	var l StatementLine
+	if err := row.Scan(
+		&l.ID, &l.StatementID, &l.LineDate, &l.Description, &l.Payee, &l.Amount, &l.Direction,
+		&l.ExternalRef, &l.MatchStatus, &l.MatchedDocumentRef,
+	); err != nil {
+		if err == pgx.ErrNoRows {
+			return nil, ErrStatementLineNotFound
+		}
+		return nil, err
+	}
+	return &l, nil
+}
+
+// RejectStatementLineMatch discards a proposed draft match, returning the line
+// to unmatched so it can be re-proposed or matched manually.
+func (r *Repository) RejectStatementLineMatch(ctx context.Context, lineID uuid.UUID) error {
+	tag, err := r.pool.Exec(ctx, `
+		UPDATE bank_statement_lines
+		SET match_status = 'unmatched', matched_document_ref = NULL
+		WHERE id = $1 AND match_status = 'proposed'
+	`, lineID)
 	if err != nil {
 		return err
 	}
@@ -192,7 +251,9 @@ func (r *Repository) AutoMatchStatementLines(ctx context.Context, statementID uu
 		if docRef == "" {
 			continue
 		}
-		if err := r.MatchStatementLine(ctx, l.ID, docRef); err != nil {
+		// Propose, don't match: auto-matches are drafts a reviewer must
+		// confirm before they post to the bank ledger.
+		if err := r.ProposeStatementLineMatch(ctx, l.ID, docRef); err != nil {
 			if errors.Is(err, ErrStatementLineNotFound) {
 				continue
 			}
@@ -201,14 +262,9 @@ func (r *Repository) AutoMatchStatementLines(ctx context.Context, statementID uu
 		matched++
 	}
 	if matched > 0 {
-		code, err := r.BankAccountCodeForStatement(ctx, statementID)
-		if err != nil {
-			return matched, err
-		}
-		if err := r.MaterializeBankTransactions(ctx, code, statementID); err != nil {
-			return matched, err
-		}
-		_, _ = r.pool.Exec(ctx, `UPDATE bank_statements SET status = 'reconciling', updated_at = NOW() WHERE id = $1`, statementID)
+		// Move the statement into review. Materialization is deferred to the
+		// per-line confirm step, so nothing hits bank_transactions yet.
+		_, _ = r.pool.Exec(ctx, `UPDATE bank_statements SET status = 'reviewing', updated_at = NOW() WHERE id = $1`, statementID)
 	}
 	return matched, nil
 }
