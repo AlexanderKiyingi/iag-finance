@@ -38,12 +38,15 @@ func NewRouter(deps RouterDeps) *gin.Engine {
 	corsCfg := cors.Config{
 		AllowOrigins:     deps.Config.CORSAllowOrigins,
 		AllowMethods:     []string{"GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"},
-		AllowHeaders:     []string{"Origin", "Content-Type", "Authorization"},
+		AllowHeaders:     []string{"Origin", "Content-Type", "Authorization", "Idempotency-Key", "X-Correlation-Id", "X-Request-Id"},
 		ExposeHeaders:    []string{"Content-Length"},
 		AllowCredentials: true,
 		MaxAge:           12 * 3600,
 	}
-	if len(corsCfg.AllowOrigins) == 0 {
+	// Only fall back to a localhost origin outside production. With
+	// AllowCredentials=true a localhost default must never leak into a prod
+	// deployment that forgot to set CORS_ALLOW_ORIGINS.
+	if len(corsCfg.AllowOrigins) == 0 && deps.Config.Environment != "production" {
 		corsCfg.AllowOrigins = []string{"http://localhost:3000"}
 	}
 	router.Use(cors.New(corsCfg))
@@ -72,7 +75,7 @@ func NewRouter(deps RouterDeps) *gin.Engine {
 		Integrations:    deps.Integrations,
 		Cfg:             deps.Config,
 		Users:           users,
-		Repo:            repository.New(deps.Pool),
+		Repo:            newConfiguredRepo(deps),
 	}
 
 	router.GET("/health", ops.Health)
@@ -105,15 +108,21 @@ func NewRouter(deps RouterDeps) *gin.Engine {
 		v1.GET("/ledger/entries/:id", ledgerRead, api.GetJournalEntry)
 		v1.POST("/ledger/entries", ledgerWrite, api.CreateJournalEntry)
 		v1.POST("/ledger/entries/:id/post", ledgerWrite, api.PostJournalEntry)
+		v1.POST("/ledger/entries/:id/reverse", ledgerWrite, api.ReverseJournalEntry)
 		v1.POST("/ledger/validate-posting", ledgerWrite, ops.ValidatePosting)
 		v1.GET("/ledger/periods", ledgerRead, api.ListFiscalPeriods)
 		v1.POST("/ledger/periods/:period/close", ledgerWrite, api.CloseFiscalPeriod)
 		v1.POST("/ledger/periods/:period/reopen", ledgerWrite, api.ReopenFiscalPeriod)
+		v1.POST("/ledger/year-end/:year/close", ledgerWrite, api.CloseFiscalYear)
 		v1.GET("/reports/trial-balance", ledgerRead, api.TrialBalance)
 		v1.GET("/reports/ar-aging", ledgerRead, api.ARAging)
+		v1.GET("/reports/ap-aging", ledgerRead, api.APAging)
 		v1.GET("/reports/profit-and-loss", ledgerRead, api.ProfitAndLoss)
 		v1.GET("/reports/balance-sheet", ledgerRead, api.BalanceSheet)
+		v1.GET("/reports/gl-account/:code", ledgerRead, api.GLAccountDetail)
 		v1.GET("/finance/summary", ledgerRead, api.FinanceSummary)
+		v1.GET("/fx/rates", ledgerRead, api.ListExchangeRates)
+		v1.POST("/fx/rates", ledgerWrite, api.UpsertExchangeRate)
 		v1.GET("/invoices", ledgerRead, api.ListInvoicesLegacy)
 		v1.POST("/invoices", ledgerWrite, api.CreateInvoiceLegacy)
 		v1.GET("/invoices/funnel", ledgerRead, api.InvoiceFunnel)
@@ -154,6 +163,7 @@ func NewRouter(deps RouterDeps) *gin.Engine {
 
 		// Hash-chain ops audit (prototype UI)
 		v1.GET("/audit/events", opsRead, ops.ListAudit)
+		v1.GET("/audit/events/verify", opsRead, ops.VerifyAudit)
 		v1.POST("/audit/events", opsWrite, ops.AppendAudit)
 		v1.GET("/tables/:tableId/rows", opsRead, ops.ListTableRows)
 		v1.POST("/tables/:tableId/rows", opsWrite, ops.AppendTableRow)
@@ -169,8 +179,17 @@ func NewRouter(deps RouterDeps) *gin.Engine {
 	return router
 }
 
-// NewLedger builds ledger + audit services from the pool.
-func NewLedger(pool *pgxpool.Pool) (*ledger.Service, *auditlog.Service) {
+// NewLedger builds ledger + audit services from the pool, configured with the
+// base/reporting currency used for FX conversion.
+func NewLedger(pool *pgxpool.Pool, baseCurrency string) (*ledger.Service, *auditlog.Service) {
 	repo := repository.New(pool)
+	repo.SetBaseCurrency(baseCurrency)
 	return ledger.New(repo), auditlog.New(repo)
+}
+
+// newConfiguredRepo builds a repository with the base currency applied.
+func newConfiguredRepo(deps RouterDeps) *repository.Repository {
+	repo := repository.New(deps.Pool)
+	repo.SetBaseCurrency(deps.Config.BaseCurrency)
+	return repo
 }

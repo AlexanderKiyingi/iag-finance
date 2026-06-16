@@ -14,10 +14,20 @@ func (a *API) MonitoringSummary(c *gin.Context) {
 		apierr.JSONStatus(c, http.StatusInternalServerError, "could not load monitoring summary")
 		return
 	}
-	if a.ConsumerEnabled {
-		for i := range summary.Integrations {
-			if summary.Integrations[i].Name == "kafka-consumer" {
+	// Reflect the real adapter modes rather than the persisted "stub" placeholder.
+	for i := range summary.Integrations {
+		switch summary.Integrations[i].Name {
+		case "kafka-consumer":
+			if a.ConsumerEnabled {
 				summary.Integrations[i].Status = "enabled"
+			}
+		case "ura-efris":
+			if a.Integrations != nil {
+				summary.Integrations[i].Status = a.Integrations.EFRISMode()
+			}
+		case "banking":
+			if a.Integrations != nil {
+				summary.Integrations[i].Status = a.Integrations.BankMode()
 			}
 		}
 	}

@@ -5,7 +5,9 @@ import (
 	"crypto/sha256"
 	"embed"
 	"encoding/hex"
+	"errors"
 	"fmt"
+	"log/slog"
 	"sort"
 	"strings"
 
@@ -87,22 +89,30 @@ func RunMigrations(ctx context.Context, pool *pgxpool.Pool) error {
 	sort.Strings(files)
 
 	for _, name := range files {
-		var exists bool
-		q := fmt.Sprintf(`SELECT EXISTS(SELECT 1 FROM %s.%s WHERE version = $1)`, financeSchema, financeMigrationsTable)
-		if err := pool.QueryRow(ctx, q, name).Scan(&exists); err != nil {
-			return err
-		}
-		if exists {
-			continue
-		}
-
 		body, err := migrationFS.ReadFile("migrations/" + name)
 		if err != nil {
 			return err
 		}
-
 		sum := sha256.Sum256(body)
 		checksum := hex.EncodeToString(sum[:])
+
+		var storedChecksum *string
+		q := fmt.Sprintf(`SELECT checksum FROM %s.%s WHERE version = $1`, financeSchema, financeMigrationsTable)
+		switch err := pool.QueryRow(ctx, q, name).Scan(&storedChecksum); {
+		case err == nil:
+			// Already applied — verify the file content has not drifted since.
+			// A mismatch means a shipped migration was edited after release,
+			// which a version-only skip would hide. Warn loudly; do not re-run.
+			if storedChecksum != nil && *storedChecksum != "" && *storedChecksum != checksum {
+				slog.Warn("applied migration content has drifted from its recorded checksum",
+					"migration", name, "recorded", *storedChecksum, "current", checksum)
+			}
+			continue
+		case errors.Is(err, pgx.ErrNoRows):
+			// Not applied yet — fall through to apply below.
+		default:
+			return err
+		}
 
 		tx, err := pool.Begin(ctx)
 		if err != nil {

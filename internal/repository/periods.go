@@ -35,10 +35,25 @@ func (r *Repository) IsPeriodClosed(ctx context.Context, period string) (bool, e
 	return status == "closed", nil
 }
 
+// ErrPeriodHasDrafts blocks closing a period that still has unposted entries
+// dated within it — they would be orphaned outside the closed books.
+var ErrPeriodHasDrafts = errors.New("period has draft entries; post or delete them before closing")
+
 // SetPeriodStatus upserts a period's open/closed status. closed_at/closed_by
-// are stamped when closing and cleared when reopening.
+// are stamped when closing and cleared when reopening. Closing refuses if any
+// draft entry is dated within the period.
 func (r *Repository) SetPeriodStatus(ctx context.Context, period, status string, by *uuid.UUID) error {
 	if status == "closed" {
+		var drafts int
+		if err := r.pool.QueryRow(ctx, `
+			SELECT COUNT(*) FROM journal_entries
+			WHERE status = 'draft' AND to_char(accounting_date, 'YYYY-MM') = $1
+		`, period).Scan(&drafts); err != nil {
+			return err
+		}
+		if drafts > 0 {
+			return ErrPeriodHasDrafts
+		}
 		_, err := r.pool.Exec(ctx, `
 			INSERT INTO fiscal_periods (period, status, closed_at, closed_by, updated_at)
 			VALUES ($1, 'closed', NOW(), $2, NOW())

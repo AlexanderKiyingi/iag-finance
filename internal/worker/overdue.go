@@ -30,9 +30,15 @@ func (w *OverdueNotifier) Run(ctx context.Context) {
 		slog.Info("overdue cron disabled or OVERDUE_NOTIFY_EMAIL unset")
 		return
 	}
+	// Unset → daily default; otherwise honour the configured cadence but never
+	// faster than a 5m floor (previously any sub-5m value was forced to 24h,
+	// surprising operators who set a short interval for testing).
 	interval := w.cfg.OverdueCronInterval
-	if interval < 5*time.Minute {
+	switch {
+	case interval <= 0:
 		interval = 24 * time.Hour
+	case interval < 5*time.Minute:
+		interval = 5 * time.Minute
 	}
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()

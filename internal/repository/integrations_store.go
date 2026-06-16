@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 )
 
@@ -47,6 +48,33 @@ func (r *Repository) BankingCounts(ctx context.Context) (BankingStatus, error) {
 		FROM bank_statements
 	`).Scan(&s.Imported, &s.Reconciling, &s.Reconciled, &s.Failed)
 	return s, err
+}
+
+// EFRISSubmissionState is the current persisted state of a submission.
+type EFRISSubmissionState struct {
+	Status  string
+	Receipt string
+	Found   bool
+}
+
+// GetEFRISSubmission returns the current status/receipt for a document, if any.
+func (r *Repository) GetEFRISSubmission(ctx context.Context, documentRef string) (EFRISSubmissionState, error) {
+	var st EFRISSubmissionState
+	var receipt *string
+	err := r.pool.QueryRow(ctx, `
+		SELECT status, ura_receipt FROM efris_submissions WHERE document_ref = $1
+	`, documentRef).Scan(&st.Status, &receipt)
+	if err != nil {
+		if err == pgx.ErrNoRows {
+			return EFRISSubmissionState{}, nil
+		}
+		return EFRISSubmissionState{}, err
+	}
+	st.Found = true
+	if receipt != nil {
+		st.Receipt = *receipt
+	}
+	return st, nil
 }
 
 func (r *Repository) QueueEFRISSubmission(ctx context.Context, documentRef string) (uuid.UUID, error) {

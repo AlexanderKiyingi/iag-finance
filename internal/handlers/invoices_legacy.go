@@ -105,12 +105,13 @@ func (a *API) CreateInvoiceLegacy(c *gin.Context) {
 		}
 		due = &t
 	}
-	item, err := a.Ledger.CreateARItem(c.Request.Context(), in.Customer, no, "", strconv.FormatFloat(in.Total, 'f', 2, 64), "UGX", due)
+	amount := strconv.FormatFloat(in.Total, 'f', 2, 64)
+	outbox := saleCompletedOutbox(a.Events, no, in.Customer, amount, "UGX")
+	item, err := a.Ledger.CreateARItem(c.Request.Context(), in.Customer, no, "", amount, "UGX", due, outbox)
 	if err != nil {
 		apierr.JSONStatus(c, http.StatusConflict, "could not create invoice")
 		return
 	}
-	publishSaleCompleted(c.Request.Context(), a.Events, no, in.Customer, item.Amount, item.Currency)
 	inv, _ := toLegacyInvoice(*item)
 	c.JSON(http.StatusCreated, inv)
 }

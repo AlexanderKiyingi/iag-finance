@@ -136,7 +136,7 @@ func (r *Repository) GetAuditLog(ctx context.Context, id uuid.UUID) (*domain.Aud
 
 func (r *Repository) MonitoringSummary(ctx context.Context) (*domain.MonitoringSummary, error) {
 	summary := &domain.MonitoringSummary{
-		Service:   "accounts",
+		Service:   "finance",
 		CheckedAt: time.Now().UTC(),
 	}
 

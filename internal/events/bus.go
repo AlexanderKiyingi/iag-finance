@@ -4,10 +4,13 @@ package events
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 
 	platformevents "github.com/alvor-technologies/iag-platform-go/events"
 )
+
+var errNoProducer = errors.New("event producer not configured")
 
 const (
 	Source = "iag.finance"
@@ -17,6 +20,7 @@ const (
 
 	TypeInvoiceApproved = "finance.invoice.approved"
 	TypeEFRISSubmitted  = "finance.efris.submitted"
+	TypePaymentMade     = "finance.payment.made"
 
 	TypeNotificationRequested = "notification.requested"
 	TopicNotifications        = "iag.notifications"
@@ -67,6 +71,32 @@ func New(cfg Config) *Bus {
 // Enabled reports whether finance ledger event publishing is active.
 func (b *Bus) Enabled() bool {
 	return b != nil && b.financeEnabled && b.producer != nil
+}
+
+// FinanceTopic is the configured Kafka topic for finance domain events. Used
+// when enqueuing outbox rows so the relay can deliver them to the right topic.
+func (b *Bus) FinanceTopic() string {
+	if b == nil {
+		return ""
+	}
+	return b.topic
+}
+
+// PublishRaw delivers a pre-built event to an explicit topic and RETURNS the
+// error (unlike Publish, which is fire-and-forget). The outbox relay uses this
+// so it can retry on failure instead of losing the event.
+func (b *Bus) PublishRaw(ctx context.Context, topic, partitionKey, eventID, eventType string, payload map[string]any) error {
+	if b == nil || b.producer == nil {
+		return errNoProducer
+	}
+	env := platformevents.NewEnvelope(Source, eventType, payload)
+	if eventID != "" {
+		env.ID = eventID
+	}
+	if partitionKey == "" {
+		partitionKey = env.ID
+	}
+	return b.producer.Publish(ctx, topic, partitionKey, env)
 }
 
 // NotificationsEnabled reports whether notification.requested can be published.

@@ -1,6 +1,7 @@
 package middleware
 
 import (
+	"log/slog"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -22,8 +23,11 @@ func AuditLog(svc *auditlog.Service) gin.HandlerFunc {
 
 		var actorID *uuid.UUID
 		if raw, ok := c.Get("userID"); ok {
-			id := raw.(uuid.UUID)
-			actorID = &id
+			// comma-ok guards against a non-UUID principal id panicking the
+			// deferred audit step (and taking the request down via Recovery).
+			if id, ok := raw.(uuid.UUID); ok {
+				actorID = &id
+			}
 		}
 
 		email := ""
@@ -37,7 +41,7 @@ func AuditLog(svc *auditlog.Service) gin.HandlerFunc {
 		}
 
 		status := c.Writer.Status()
-		_ = svc.Record(c.Request.Context(), auditlog.RecordInput{
+		if err := svc.Record(c.Request.Context(), auditlog.RecordInput{
 			EventType:     auditlog.EventHTTPRequest,
 			ActorID:       actorID,
 			ActorEmail:    email,
@@ -51,6 +55,10 @@ func AuditLog(svc *auditlog.Service) gin.HandlerFunc {
 				"durationMs": time.Since(start).Milliseconds(),
 				"query":      c.Request.URL.RawQuery,
 			},
-		})
+		}); err != nil {
+			// An audit write failing is a compliance signal, not something to
+			// silently drop — surface it loudly (the request itself stands).
+			slog.Error("audit log write failed", "method", c.Request.Method, "path", path, "err", err)
+		}
 	}
 }

@@ -2,6 +2,7 @@ package repository
 
 import (
 	"context"
+	"errors"
 	"time"
 
 	"github.com/google/uuid"
@@ -12,13 +13,28 @@ import (
 	"github.com/iag-finance/backend/internal/domain"
 )
 
+// ErrPeriodClosed indicates a post was attempted into a closed fiscal period.
+var ErrPeriodClosed = errors.New("accounting period is closed")
+
 type Repository struct {
-	pool *pgxpool.Pool
+	pool         *pgxpool.Pool
+	baseCurrency string
 }
 
 func New(pool *pgxpool.Pool) *Repository {
-	return &Repository{pool: pool}
+	return &Repository{pool: pool, baseCurrency: "UGX"}
 }
+
+// SetBaseCurrency sets the reporting/base currency (default UGX). All journal
+// lines store a base-currency equivalent computed against it.
+func (r *Repository) SetBaseCurrency(c string) {
+	if c != "" {
+		r.baseCurrency = c
+	}
+}
+
+// BaseCurrency returns the configured base/reporting currency.
+func (r *Repository) BaseCurrency() string { return r.baseCurrency }
 
 type ResolvedLine struct {
 	AccountID uuid.UUID
@@ -29,14 +45,42 @@ type ResolvedLine struct {
 }
 
 type CreateJournalParams struct {
-	EntryNumber   string
-	Description   string
-	Status        string
-	SourceEventID *string
-	SourceService *string
-	CorrelationID *string
-	CreatedBy     *uuid.UUID
-	Lines         []ResolvedLine
+	EntryNumber    string
+	Description    string
+	Status         string
+	SourceEventID  *string
+	SourceService  *string
+	CorrelationID  *string
+	CreatedBy      *uuid.UUID
+	AccountingDate time.Time        // zero → defaults to the posting date / today
+	Currency       string           // transaction currency of the lines (zero → base)
+	FXRate         decimal.Decimal  // currency→base rate (zero → 1)
+	Lines          []ResolvedLine
+}
+
+// lineCurrency returns the params' transaction currency, defaulting to base.
+func (p CreateJournalParams) lineCurrency(base string) string {
+	if p.Currency == "" {
+		return base
+	}
+	return p.Currency
+}
+
+// rate returns the params' FX rate, defaulting to 1 (base currency / no FX).
+func (p CreateJournalParams) rate() decimal.Decimal {
+	if p.FXRate.IsZero() {
+		return decimal.NewFromInt(1)
+	}
+	return p.FXRate
+}
+
+// resolveAccountingDate returns the params' accounting date, or fallback when
+// unset (zero). Keeps every booking path consistent.
+func resolveAccountingDate(d, fallback time.Time) time.Time {
+	if d.IsZero() {
+		return fallback
+	}
+	return d
 }
 
 var defaultAccounts = []struct {
@@ -142,10 +186,10 @@ func (r *Repository) CreateJournalEntry(ctx context.Context, p CreateJournalPara
 	var entry domain.JournalEntry
 	err = tx.QueryRow(ctx, `
 		INSERT INTO journal_entries (
-			entry_number, description, status, source_event_id, source_service, correlation_id, created_by
-		) VALUES ($1, $2, $3, $4, $5, $6, $7)
+			entry_number, description, status, source_event_id, source_service, correlation_id, created_by, accounting_date
+		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
 		RETURNING id, entry_number, description, status, source_event_id, source_service, correlation_id, posted_at, created_by, created_at, updated_at
-	`, p.EntryNumber, p.Description, p.Status, p.SourceEventID, p.SourceService, p.CorrelationID, p.CreatedBy).Scan(
+	`, p.EntryNumber, p.Description, p.Status, p.SourceEventID, p.SourceService, p.CorrelationID, p.CreatedBy, resolveAccountingDate(p.AccountingDate, time.Now().UTC())).Scan(
 		&entry.ID, &entry.EntryNumber, &entry.Description, &entry.Status,
 		&entry.SourceEventID, &entry.SourceService, &entry.CorrelationID,
 		&entry.PostedAt, &entry.CreatedBy, &entry.CreatedAt, &entry.UpdatedAt,
@@ -154,13 +198,15 @@ func (r *Repository) CreateJournalEntry(ctx context.Context, p CreateJournalPara
 		return nil, err
 	}
 
+	currency := p.lineCurrency(r.baseCurrency)
+	rate := p.rate()
 	for _, line := range p.Lines {
 		var jl domain.JournalLine
 		err = tx.QueryRow(ctx, `
-			INSERT INTO journal_lines (journal_entry_id, account_id, debit, credit, memo, line_order)
-			VALUES ($1, $2, $3, $4, $5, $6)
+			INSERT INTO journal_lines (journal_entry_id, account_id, debit, credit, memo, line_order, currency, debit_base, credit_base)
+			VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
 			RETURNING id, journal_entry_id, account_id, debit, credit, memo, line_order
-		`, entry.ID, line.AccountID, line.Debit, line.Credit, line.Memo, line.LineOrder).Scan(
+		`, entry.ID, line.AccountID, line.Debit, line.Credit, line.Memo, line.LineOrder, currency, line.Debit.Mul(rate).Round(2), line.Credit.Mul(rate).Round(2)).Scan(
 			&jl.ID, &jl.JournalEntryID, &jl.AccountID, &jl.Debit, &jl.Credit, &jl.Memo, &jl.LineOrder,
 		)
 		if err != nil {
@@ -290,6 +336,66 @@ func (r *Repository) UpdateJournalStatus(ctx context.Context, id uuid.UUID, stat
 	return r.GetJournalEntry(ctx, id)
 }
 
+// MarkEntryPosted flips a draft entry to posted, but only while it is still
+// draft. The WHERE status='draft' guard is the authoritative concurrency
+// control: two racing posts serialize on the row, and the loser matches zero
+// rows (status is already 'posted') rather than double-posting. The fiscal
+// period is checked against the entry's own accounting_date (not wall-clock),
+// and the audit chain entry is appended in the same transaction. Returns false
+// when no draft row matched (already posted, reversed, or missing);
+// ErrPeriodClosed when the entry's accounting period is closed.
+func (r *Repository) MarkEntryPosted(ctx context.Context, id uuid.UUID, postedAt time.Time, audit *AuditInfo) (bool, error) {
+	tx, err := r.pool.Begin(ctx)
+	if err != nil {
+		return false, err
+	}
+	defer tx.Rollback(ctx)
+
+	var status, period string
+	err = tx.QueryRow(ctx, `
+		SELECT status, to_char(accounting_date, 'YYYY-MM') FROM journal_entries WHERE id = $1 FOR UPDATE
+	`, id).Scan(&status, &period)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return false, nil
+		}
+		return false, err
+	}
+	if status != "draft" {
+		return false, nil
+	}
+
+	var periodStatus string
+	switch err := tx.QueryRow(ctx, `SELECT status FROM fiscal_periods WHERE period = $1`, period).Scan(&periodStatus); {
+	case err == nil:
+		if periodStatus == "closed" {
+			return false, ErrPeriodClosed
+		}
+	case errors.Is(err, pgx.ErrNoRows):
+		// No row → period open by default.
+	default:
+		return false, err
+	}
+
+	tag, err := tx.Exec(ctx, `
+		UPDATE journal_entries SET status = 'posted', posted_at = $2, updated_at = NOW()
+		WHERE id = $1 AND status = 'draft'
+	`, id, postedAt)
+	if err != nil {
+		return false, err
+	}
+	if tag.RowsAffected() != 1 {
+		return false, nil
+	}
+	if err := appendAudit(ctx, tx, audit); err != nil {
+		return false, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
 func (r *Repository) IsEventProcessed(ctx context.Context, eventID string) (bool, error) {
 	var exists bool
 	err := r.pool.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM processed_events WHERE event_id = $1)`, eventID).Scan(&exists)
@@ -388,37 +494,67 @@ func scanAPItems(rows pgx.Rows) ([]domain.APOpenItem, error) {
 	return items, rows.Err()
 }
 
-func (r *Repository) CreateAROpenItem(ctx context.Context, customerRef, documentRef, description, amount, currency string, dueDate *time.Time, journalEntryID *uuid.UUID, sourceEventID *string) (*domain.AROpenItem, error) {
-	row := r.pool.QueryRow(ctx, `
-		INSERT INTO ar_open_items (customer_ref, document_ref, description, amount, currency, due_date, journal_entry_id, source_event_id)
-		VALUES ($1, $2, $3, $4::numeric, $5, $6, $7, $8)
-		RETURNING id, customer_ref, document_ref, description, amount::text, amount_paid::text, currency, due_date, status, journal_entry_id, source_event_id, created_at, updated_at
-	`, customerRef, documentRef, description, amount, currency, dueDate, journalEntryID, sourceEventID)
+// CreateAROpenItem inserts an AR open item and, when outbox is non-nil, enqueues
+// its domain event in the same transaction so the two can never diverge.
+func (r *Repository) CreateAROpenItem(ctx context.Context, customerRef, documentRef, description, amount, currency string, dueDate *time.Time, journalEntryID *uuid.UUID, sourceEventID *string, outbox *OutboxEvent) (*domain.AROpenItem, error) {
+	tx, err := r.pool.Begin(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer tx.Rollback(ctx)
 
+	fxRate := r.RateOrOne(ctx, currency, time.Now().UTC())
 	var i domain.AROpenItem
-	if err := row.Scan(
+	if err := tx.QueryRow(ctx, `
+		INSERT INTO ar_open_items (customer_ref, document_ref, description, amount, currency, due_date, journal_entry_id, source_event_id, fx_rate)
+		VALUES ($1, $2, $3, $4::numeric, $5, $6, $7, $8, $9::numeric)
+		RETURNING id, customer_ref, document_ref, description, amount::text, amount_paid::text, currency, due_date, status, journal_entry_id, source_event_id, created_at, updated_at
+	`, customerRef, documentRef, description, amount, currency, dueDate, journalEntryID, sourceEventID, fxRate.String()).Scan(
 		&i.ID, &i.CustomerRef, &i.DocumentRef, &i.Description, &i.Amount, &i.AmountPaid,
 		&i.Currency, &i.DueDate, &i.Status, &i.JournalEntryID, &i.SourceEventID,
 		&i.CreatedAt, &i.UpdatedAt,
 	); err != nil {
 		return nil, err
 	}
+	if outbox != nil {
+		if err := enqueueOutboxTx(ctx, tx, *outbox); err != nil {
+			return nil, err
+		}
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return nil, err
+	}
 	return &i, nil
 }
 
-func (r *Repository) CreateAPOpenItem(ctx context.Context, vendorRef, documentRef, description, amount, currency string, dueDate *time.Time, journalEntryID *uuid.UUID, sourceEventID *string) (*domain.APOpenItem, error) {
-	row := r.pool.QueryRow(ctx, `
-		INSERT INTO ap_open_items (vendor_ref, document_ref, description, amount, currency, due_date, journal_entry_id, source_event_id)
-		VALUES ($1, $2, $3, $4::numeric, $5, $6, $7, $8)
-		RETURNING id, vendor_ref, document_ref, description, amount::text, amount_paid::text, currency, due_date, status, journal_entry_id, source_event_id, party_id, created_at, updated_at
-	`, vendorRef, documentRef, description, amount, currency, dueDate, journalEntryID, sourceEventID)
+// CreateAPOpenItem inserts an AP open item and, when outbox is non-nil, enqueues
+// its domain event in the same transaction.
+func (r *Repository) CreateAPOpenItem(ctx context.Context, vendorRef, documentRef, description, amount, currency string, dueDate *time.Time, journalEntryID *uuid.UUID, sourceEventID *string, outbox *OutboxEvent) (*domain.APOpenItem, error) {
+	tx, err := r.pool.Begin(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer tx.Rollback(ctx)
 
+	fxRate := r.RateOrOne(ctx, currency, time.Now().UTC())
 	var i domain.APOpenItem
-	if err := row.Scan(
+	if err := tx.QueryRow(ctx, `
+		INSERT INTO ap_open_items (vendor_ref, document_ref, description, amount, currency, due_date, journal_entry_id, source_event_id, fx_rate)
+		VALUES ($1, $2, $3, $4::numeric, $5, $6, $7, $8, $9::numeric)
+		RETURNING id, vendor_ref, document_ref, description, amount::text, amount_paid::text, currency, due_date, status, journal_entry_id, source_event_id, party_id, created_at, updated_at
+	`, vendorRef, documentRef, description, amount, currency, dueDate, journalEntryID, sourceEventID, fxRate.String()).Scan(
 		&i.ID, &i.VendorRef, &i.DocumentRef, &i.Description, &i.Amount, &i.AmountPaid,
 		&i.Currency, &i.DueDate, &i.Status, &i.JournalEntryID, &i.SourceEventID, &i.PartyID,
 		&i.CreatedAt, &i.UpdatedAt,
 	); err != nil {
+		return nil, err
+	}
+	if outbox != nil {
+		if err := enqueueOutboxTx(ctx, tx, *outbox); err != nil {
+			return nil, err
+		}
+	}
+	if err := tx.Commit(ctx); err != nil {
 		return nil, err
 	}
 	return &i, nil
@@ -431,18 +567,27 @@ type TrialBalanceRow struct {
 	Credit      string `json:"credit"`
 }
 
-func (r *Repository) TrialBalance(ctx context.Context) ([]TrialBalanceRow, error) {
+// TrialBalance sums posted debits/credits per account, optionally bounded to a
+// [from, to] accounting-date range (nil = unbounded on that side).
+func (r *Repository) TrialBalance(ctx context.Context, from, to *time.Time) ([]TrialBalanceRow, error) {
+	// FILTER the SUMs to rows where the posted + in-range journal-entry join
+	// matched (je.id IS NOT NULL). This keeps every active account on the trial
+	// balance (zero-activity accounts show 0 / 0) while ensuring draft and
+	// out-of-range lines never inflate the totals — otherwise the LEFT JOIN would
+	// sum every line regardless of status/date, making the bounds a no-op.
 	rows, err := r.pool.Query(ctx, `
 		SELECT coa.code, coa.name,
-			COALESCE(SUM(jl.debit), 0)::text,
-			COALESCE(SUM(jl.credit), 0)::text
+			COALESCE(SUM(jl.debit_base) FILTER (WHERE je.id IS NOT NULL), 0)::text,
+			COALESCE(SUM(jl.credit_base) FILTER (WHERE je.id IS NOT NULL), 0)::text
 		FROM chart_of_accounts coa
 		LEFT JOIN journal_lines jl ON jl.account_id = coa.id
 		LEFT JOIN journal_entries je ON je.id = jl.journal_entry_id AND je.status = 'posted'
+			AND ($1::date IS NULL OR je.accounting_date >= $1)
+			AND ($2::date IS NULL OR je.accounting_date <= $2)
 		WHERE coa.active = TRUE
 		GROUP BY coa.id, coa.code, coa.name
 		ORDER BY coa.code
-	`)
+	`, from, to)
 	if err != nil {
 		return nil, err
 	}

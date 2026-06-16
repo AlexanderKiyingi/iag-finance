@@ -23,6 +23,7 @@ type PayrollEmployeeUpsert struct {
 	OperatorRef    string
 	EventID        string
 	EventType      string
+	EventTime      time.Time
 }
 
 type PayrollLeaveAccrualInput struct {
@@ -42,11 +43,18 @@ func (r *Repository) UpsertPayrollEmployeeRef(ctx context.Context, in PayrollEmp
 	if employeeNo == "" || strings.TrimSpace(in.EventID) == "" {
 		return errPayrollBadInput
 	}
+	eventTime := in.EventTime
+	if eventTime.IsZero() {
+		eventTime = time.Now().UTC()
+	}
+	// The DO UPDATE ... WHERE clause applies the change only when this event is
+	// at least as recent as the one already mirrored, so a stale/out-of-order
+	// event cannot overwrite newer state (e.g. resurrect a terminated employee).
 	_, err := r.pool.Exec(ctx, `
 		INSERT INTO payroll_employee_refs (
 		  employee_no, user_id, first_name, last_name, department_code, job_title,
-		  employment_type, status, operator_ref, last_event_id, last_event_type, updated_at
-		) VALUES ($1,$2,$3,$4,NULLIF($5,''),$6,$7,$8,NULLIF($9,''),$10,$11,NOW())
+		  employment_type, status, operator_ref, last_event_id, last_event_type, last_event_at, updated_at
+		) VALUES ($1,$2,$3,$4,NULLIF($5,''),$6,$7,$8,NULLIF($9,''),$10,$11,$12,NOW())
 		ON CONFLICT (employee_no) DO UPDATE SET
 		  user_id = COALESCE(EXCLUDED.user_id, payroll_employee_refs.user_id),
 		  first_name = EXCLUDED.first_name,
@@ -58,9 +66,11 @@ func (r *Repository) UpsertPayrollEmployeeRef(ctx context.Context, in PayrollEmp
 		  operator_ref = COALESCE(EXCLUDED.operator_ref, payroll_employee_refs.operator_ref),
 		  last_event_id = EXCLUDED.last_event_id,
 		  last_event_type = EXCLUDED.last_event_type,
-		  updated_at = NOW()`,
+		  last_event_at = EXCLUDED.last_event_at,
+		  updated_at = NOW()
+		WHERE EXCLUDED.last_event_at >= payroll_employee_refs.last_event_at`,
 		employeeNo, in.UserID, in.FirstName, in.LastName, in.DepartmentCode, in.JobTitle,
-		in.EmploymentType, in.Status, in.OperatorRef, in.EventID, in.EventType)
+		in.EmploymentType, in.Status, in.OperatorRef, in.EventID, in.EventType, eventTime)
 	return err
 }
 

@@ -205,7 +205,7 @@ func (a *API) PostJournalEntry(c *gin.Context) {
 		apierr.JSONStatus(c, http.StatusBadRequest, "invalid id")
 		return
 	}
-	entry, err := a.Ledger.PostJournalEntry(c.Request.Context(), id)
+	entry, err := a.Ledger.PostJournalEntry(c.Request.Context(), id, chainActor(c))
 	if err != nil {
 		status := http.StatusBadRequest
 		if errors.Is(err, ledger.ErrInvalidStatus) || errors.Is(err, ledger.ErrUnbalancedEntry) || errors.Is(err, ledger.ErrPeriodClosed) {
@@ -217,6 +217,38 @@ func (a *API) PostJournalEntry(c *gin.Context) {
 	c.JSON(http.StatusOK, entry)
 	logBusinessEvent(c, a.Audit, auditlog.EventJournalPosted, "journal_entry", entry.ID.String(), http.StatusOK, map[string]any{
 		"entryNumber": entry.EntryNumber,
+	})
+}
+
+type reverseEntryRequest struct {
+	Reason string `json:"reason"`
+}
+
+// ReverseJournalEntry posts a reversing entry for a posted entry and marks the
+// original 'reversed'. The only sanctioned way to undo a posted entry.
+func (a *API) ReverseJournalEntry(c *gin.Context) {
+	id, err := uuid.Parse(c.Param("id"))
+	if err != nil {
+		apierr.JSONStatus(c, http.StatusBadRequest, "invalid id")
+		return
+	}
+	var req reverseEntryRequest
+	_ = c.ShouldBindJSON(&req)
+	rev, err := a.Ledger.ReverseJournalEntry(c.Request.Context(), id, req.Reason, chainActor(c))
+	if err != nil {
+		switch {
+		case errors.Is(err, ledger.ErrEntryNotFound):
+			apierr.JSONStatus(c, http.StatusNotFound, "journal entry not found")
+		case errors.Is(err, ledger.ErrNotReversible):
+			apierr.JSONStatus(c, http.StatusUnprocessableEntity, "only a posted entry can be reversed")
+		default:
+			apierr.JSONStatus(c, http.StatusInternalServerError, "could not reverse entry")
+		}
+		return
+	}
+	c.JSON(http.StatusCreated, rev)
+	logBusinessEvent(c, a.Audit, auditlog.EventJournalPosted, "journal_entry", rev.ID.String(), http.StatusCreated, map[string]any{
+		"entryNumber": rev.EntryNumber, "reverses": id.String(),
 	})
 }
 
@@ -264,6 +296,10 @@ func (a *API) setPeriodStatus(c *gin.Context, close bool) {
 		err = a.Ledger.ReopenPeriod(c.Request.Context(), period, by)
 	}
 	if err != nil {
+		if errors.Is(err, repository.ErrPeriodHasDrafts) {
+			apierr.JSONStatus(c, http.StatusUnprocessableEntity, "period has draft entries; post or delete them before closing")
+			return
+		}
 		apierr.JSONStatus(c, http.StatusInternalServerError, "could not update period")
 		return
 	}
@@ -372,17 +408,19 @@ func (a *API) CreateARItem(c *gin.Context) {
 		}
 		due = &t
 	}
+	// The sale.completed event is written to the outbox in the same transaction
+	// as the AR item, so the two can never diverge if the broker is down.
+	outbox := saleCompletedOutbox(a.Events, req.DocumentRef, billing.CustomerRef, req.Amount, currency)
 	var item *domain.AROpenItem
 	if billing.BillingOrgID != nil {
-		item, err = a.Ledger.CreateARItemWithBilling(c.Request.Context(), billing.CustomerRef, req.DocumentRef, req.Description, req.Amount, currency, due, billing.BillingOrgID, billing.BillingIdentityID)
+		item, err = a.Ledger.CreateARItemWithBilling(c.Request.Context(), billing.CustomerRef, req.DocumentRef, req.Description, req.Amount, currency, due, billing.BillingOrgID, billing.BillingIdentityID, outbox)
 	} else {
-		item, err = a.Ledger.CreateARItem(c.Request.Context(), billing.CustomerRef, req.DocumentRef, req.Description, req.Amount, currency, due)
+		item, err = a.Ledger.CreateARItem(c.Request.Context(), billing.CustomerRef, req.DocumentRef, req.Description, req.Amount, currency, due, outbox)
 	}
 	if err != nil {
 		apierr.JSONStatus(c, http.StatusConflict, "could not create AR item")
 		return
 	}
-	publishSaleCompleted(c.Request.Context(), a.Events, req.DocumentRef, billing.CustomerRef, req.Amount, currency)
 	c.JSON(http.StatusCreated, item)
 }
 
@@ -405,44 +443,75 @@ func (a *API) CreateAPItem(c *gin.Context) {
 		}
 		due = &t
 	}
-	item, err := a.Ledger.CreateAPItem(c.Request.Context(), req.VendorRef, req.DocumentRef, req.Description, req.Amount, currency, due)
+	outbox := invoicePostedOutbox(a.Events, req.DocumentRef, req.VendorRef, req.Amount, currency)
+	item, err := a.Ledger.CreateAPItem(c.Request.Context(), req.VendorRef, req.DocumentRef, req.Description, req.Amount, currency, due, outbox)
 	if err != nil {
 		apierr.JSONStatus(c, http.StatusConflict, "could not create AP item")
 		return
 	}
-	publishInvoicePosted(c.Request.Context(), a.Events, req.DocumentRef, req.VendorRef, req.Amount, currency)
 	c.JSON(http.StatusCreated, item)
 }
 
-func publishSaleCompleted(ctx context.Context, bus *events.Bus, documentRef, customerRef, amount, currency string) {
+// saleCompletedOutbox builds the sale.completed outbox event, or nil when event
+// publishing is disabled or the inputs are incomplete (then nothing is enqueued).
+func saleCompletedOutbox(bus *events.Bus, documentRef, customerRef, amount, currency string) *repository.OutboxEvent {
 	if bus == nil || !bus.Enabled() || documentRef == "" || amount == "" {
-		return
+		return nil
 	}
-	bus.Publish(ctx, events.TypeSaleCompleted+":"+documentRef, events.TypeSaleCompleted, map[string]any{
-		"amount":      amount,
-		"currency":    currency,
-		"customerRef": customerRef,
-		"documentRef": documentRef,
-	}, documentRef)
+	return &repository.OutboxEvent{
+		Topic:        bus.FinanceTopic(),
+		PartitionKey: documentRef,
+		EventID:      events.TypeSaleCompleted + ":" + documentRef,
+		EventType:    events.TypeSaleCompleted,
+		Payload: map[string]any{
+			"amount":      amount,
+			"currency":    currency,
+			"customerRef": customerRef,
+			"documentRef": documentRef,
+		},
+	}
 }
 
-func publishInvoicePosted(ctx context.Context, bus *events.Bus, documentRef, vendorRef, amount, currency string) {
+// invoicePostedOutbox builds the invoice.posted outbox event, or nil when
+// disabled/incomplete.
+func invoicePostedOutbox(bus *events.Bus, documentRef, vendorRef, amount, currency string) *repository.OutboxEvent {
 	if bus == nil || !bus.Enabled() || documentRef == "" || amount == "" {
-		return
+		return nil
 	}
-	bus.Publish(ctx, events.TypeInvoicePosted+":"+documentRef, events.TypeInvoicePosted, map[string]any{
-		"amount":      amount,
-		"currency":    currency,
-		"vendorRef":   vendorRef,
-		"documentRef": documentRef,
-	}, documentRef)
+	return &repository.OutboxEvent{
+		Topic:        bus.FinanceTopic(),
+		PartitionKey: documentRef,
+		EventID:      events.TypeInvoicePosted + ":" + documentRef,
+		EventType:    events.TypeInvoicePosted,
+		Payload: map[string]any{
+			"amount":      amount,
+			"currency":    currency,
+			"vendorRef":   vendorRef,
+			"documentRef": documentRef,
+		},
+	}
 }
 
 func (a *API) TrialBalance(c *gin.Context) {
-	rows, err := a.Ledger.TrialBalance(c.Request.Context())
+	rows, err := a.Ledger.TrialBalance(c.Request.Context(), dateParam(c, "from"), dateParam(c, "to"))
 	if err != nil {
 		apierr.JSONStatus(c, http.StatusInternalServerError, "could not build trial balance")
 		return
 	}
-	c.JSON(http.StatusOK, gin.H{"rows": rows, "status": "posted_entries_only"})
+	// A trial balance exists to surface imbalance: total debits must equal total
+	// credits. Compute and report it rather than leaving callers to re-sum.
+	totalDebit, totalCredit := decimal.Zero, decimal.Zero
+	for _, r := range rows {
+		d, _ := decimal.NewFromString(r.Debit)
+		cr, _ := decimal.NewFromString(r.Credit)
+		totalDebit = totalDebit.Add(d)
+		totalCredit = totalCredit.Add(cr)
+	}
+	c.JSON(http.StatusOK, gin.H{
+		"rows":        rows,
+		"status":      "posted_entries_only",
+		"totalDebit":  totalDebit.StringFixed(2),
+		"totalCredit": totalCredit.StringFixed(2),
+		"balanced":    totalDebit.Equal(totalCredit),
+	})
 }

@@ -6,9 +6,12 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
+	"github.com/shopspring/decimal"
 
 	"github.com/iag-finance/backend/internal/auditlog"
+	"github.com/iag-finance/backend/internal/events"
 	"github.com/iag-finance/backend/internal/ledger"
+	"github.com/iag-finance/backend/internal/repository"
 	"github.com/alvor-technologies/iag-platform-go/apierr"
 )
 
@@ -43,16 +46,25 @@ func (a *API) applyPayment(c *gin.Context, direction string) {
 		apierr.JSONStatus(c, http.StatusBadRequest, err.Error())
 		return
 	}
+	// Idempotency: a stable key is required so a retry/double-click reuses the
+	// same payment_ref (deduped on processed_events + the unique index) instead
+	// of minting a fresh ref each call and double-paying.
 	paymentRef := req.PaymentRef
 	if paymentRef == "" {
-		paymentRef = uuid.NewString()
+		paymentRef = c.GetHeader("Idempotency-Key")
 	}
+	if paymentRef == "" {
+		apierr.JSONStatus(c, http.StatusBadRequest, "an Idempotency-Key header or paymentRef is required")
+		return
+	}
+
+	settlement := a.paymentMadeOutbox(direction, id, amount, req.Currency, paymentRef)
 
 	var payment interface{}
 	var item interface{}
 	switch direction {
 	case "ar":
-		p, ar, err := a.Ledger.ApplyARPayment(c.Request.Context(), id, amount, req.Currency, paymentRef)
+		p, ar, err := a.Ledger.ApplyARPayment(c.Request.Context(), id, amount, req.Currency, paymentRef, chainActor(c), settlement)
 		if mapPaymentErr(c, err) {
 			return
 		}
@@ -68,7 +80,7 @@ func (a *API) applyPayment(c *gin.Context, direction string) {
 			"amount": req.Amount, "paymentRef": paymentRef,
 		})
 	case "ap":
-		p, ap, err := a.Ledger.ApplyAPPayment(c.Request.Context(), id, amount, req.Currency, paymentRef)
+		p, ap, err := a.Ledger.ApplyAPPayment(c.Request.Context(), id, amount, req.Currency, paymentRef, chainActor(c), settlement)
 		if mapPaymentErr(c, err) {
 			return
 		}
@@ -79,6 +91,35 @@ func (a *API) applyPayment(c *gin.Context, direction string) {
 	}
 
 	c.JSON(http.StatusCreated, gin.H{"payment": payment, "item": item})
+}
+
+// paymentMadeOutbox builds the transactional settlement event published when a
+// payment is applied, so downstream consumers (procurement invoice-to-payment
+// match, vendor/customer portal, notifications) learn an open item was settled.
+// Returns nil when the event bus is not configured (no topic to target). The
+// EventID is keyed on the idempotent payment ref so a retried payment never
+// produces a duplicate signal.
+func (a *API) paymentMadeOutbox(direction string, itemID uuid.UUID, amount decimal.Decimal, currency, paymentRef string) *repository.OutboxEvent {
+	if a.Events == nil {
+		return nil
+	}
+	cur := currency
+	if cur == "" {
+		cur = a.Repo.BaseCurrency()
+	}
+	return &repository.OutboxEvent{
+		Topic:        a.Events.FinanceTopic(),
+		PartitionKey: itemID.String(),
+		EventID:      events.TypePaymentMade + ":" + direction + ":" + itemID.String() + ":" + paymentRef,
+		EventType:    events.TypePaymentMade,
+		Payload: map[string]any{
+			"direction":  direction,
+			"openItemId": itemID.String(),
+			"amount":     amount.String(),
+			"currency":   cur,
+			"paymentRef": paymentRef,
+		},
+	}
 }
 
 func (a *API) ListARPayments(c *gin.Context) {
@@ -112,6 +153,8 @@ func mapPaymentErr(c *gin.Context, err error) bool {
 		apierr.JSONStatus(c, http.StatusNotFound, "open item not found")
 	case errors.Is(err, ledger.ErrPaymentExceeds):
 		apierr.JSONStatus(c, http.StatusUnprocessableEntity, "payment exceeds open balance")
+	case errors.Is(err, ledger.ErrCurrencyMismatch):
+		apierr.JSONStatus(c, http.StatusUnprocessableEntity, "payment currency must match the open item currency")
 	default:
 		apierr.JSONStatus(c, http.StatusInternalServerError, "could not apply payment")
 	}

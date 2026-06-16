@@ -1,12 +1,14 @@
 package handlers
 
 import (
+	"log/slog"
 	"net/http"
 	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/iag-finance/backend/internal/events"
 	"github.com/iag-finance/backend/internal/integrations"
+	"github.com/iag-finance/backend/internal/repository"
 	"github.com/alvor-technologies/iag-platform-go/apierr"
 )
 
@@ -82,6 +84,13 @@ func (a *API) SubmitEFRIS(c *gin.Context) {
 		apierr.JSONStatus(c, http.StatusBadRequest, err.Error())
 		return
 	}
+	// Idempotency: an already-acknowledged document is a fiscalised invoice —
+	// never re-submit it to URA (that would file a duplicate fiscal receipt).
+	if existing, err := a.Ledger.GetEFRISSubmission(c.Request.Context(), req.DocumentRef); err == nil &&
+		existing.Found && existing.Status == "acknowledged" {
+		c.JSON(http.StatusOK, gin.H{"status": "acknowledged", "uraReceipt": existing.Receipt, "idempotent": true})
+		return
+	}
 	id, err := a.Ledger.QueueEFRISSubmission(c.Request.Context(), req.DocumentRef)
 	if err != nil {
 		apierr.JSONStatus(c, http.StatusConflict, "could not queue EFRIS submission")
@@ -116,11 +125,22 @@ func (a *API) SubmitEFRIS(c *gin.Context) {
 				status = "failed"
 			}
 		}
-		_ = a.Ledger.CompleteEFRISSubmission(c.Request.Context(), req.DocumentRef, status, receipt, errMsg)
-		if a.Events != nil && status == "acknowledged" {
-			a.Events.Publish(c.Request.Context(), events.TypeEFRISSubmitted+":"+req.DocumentRef, events.TypeEFRISSubmitted, map[string]any{
-				"documentRef": req.DocumentRef, "uraReceipt": receipt,
-			}, req.DocumentRef)
+		if err := a.Ledger.CompleteEFRISSubmission(c.Request.Context(), req.DocumentRef, status, receipt, errMsg); err != nil {
+			// URA may have accepted the submission while our state write failed —
+			// surface it so the divergence is visible and reconcilable.
+			slog.Error("efris submission state write failed", "documentRef", req.DocumentRef, "status", status, "err", err)
+		}
+		if a.Events != nil && a.Events.Enabled() && status == "acknowledged" {
+			// Durable via the outbox so a broker outage doesn't drop the event.
+			if err := a.Ledger.EnqueueOutbox(c.Request.Context(), repository.OutboxEvent{
+				Topic:        a.Events.FinanceTopic(),
+				PartitionKey: req.DocumentRef,
+				EventID:      events.TypeEFRISSubmitted + ":" + req.DocumentRef,
+				EventType:    events.TypeEFRISSubmitted,
+				Payload:      map[string]any{"documentRef": req.DocumentRef, "uraReceipt": receipt},
+			}); err != nil {
+				slog.Error("efris event enqueue failed", "documentRef", req.DocumentRef, "err", err)
+			}
 		}
 	}
 	c.JSON(http.StatusAccepted, gin.H{"id": id.String(), "status": status, "uraReceipt": receipt})
@@ -129,10 +149,16 @@ func (a *API) SubmitEFRIS(c *gin.Context) {
 type importBankStatementRequest struct {
 	BankAccountCode string `json:"bankAccountCode" binding:"required"`
 	StatementDate   string `json:"statementDate" binding:"required"`
-	LineCount       int    `json:"lineCount"`
 }
 
+// ImportBankStatement pulls the real statement lines for the given day from the
+// configured bank adapter and persists them (deduped). It no longer trusts a
+// client-supplied line count — the count is whatever was actually imported.
 func (a *API) ImportBankStatement(c *gin.Context) {
+	if a.Integrations == nil || a.Integrations.Bank == nil {
+		apierr.JSONStatus(c, http.StatusServiceUnavailable, "bank feed not configured")
+		return
+	}
 	var req importBankStatementRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		apierr.JSONStatus(c, http.StatusBadRequest, err.Error())
@@ -143,13 +169,27 @@ func (a *API) ImportBankStatement(c *gin.Context) {
 		apierr.JSONStatus(c, http.StatusBadRequest, "statementDate must be YYYY-MM-DD")
 		return
 	}
-	if req.LineCount < 0 {
-		req.LineCount = 0
-	}
-	id, err := a.Ledger.ImportBankStatement(c.Request.Context(), req.BankAccountCode, stmtDate, req.LineCount)
+	from := stmtDate.UTC()
+	to := from.AddDate(0, 0, 1)
+
+	lines, err := a.Integrations.Bank.FetchLines(c.Request.Context(), req.BankAccountCode, from, to)
 	if err != nil {
-		apierr.JSONStatus(c, http.StatusConflict, "could not import bank statement")
+		apierr.JSONStatus(c, http.StatusBadGateway, err.Error())
 		return
 	}
-	c.JSON(http.StatusCreated, gin.H{"id": id.String(), "status": "imported"})
+	inputs := make([]repository.StatementLineInput, 0, len(lines))
+	for _, l := range lines {
+		inputs = append(inputs, repository.StatementLineInput{
+			Date: l.Date, Description: l.Description, Payee: l.Payee,
+			Amount: l.Amount, Direction: l.Direction, ExternalRef: l.ExternalRef,
+		})
+	}
+	stmtID, n, err := a.Ledger.SyncBankFeed(c.Request.Context(), req.BankAccountCode, from, to, inputs)
+	if err != nil {
+		apierr.JSONStatus(c, http.StatusInternalServerError, "could not import bank statement")
+		return
+	}
+	c.JSON(http.StatusCreated, gin.H{
+		"id": stmtID, "status": "imported", "lines": n, "adapter": a.Integrations.Bank.Mode(),
+	})
 }

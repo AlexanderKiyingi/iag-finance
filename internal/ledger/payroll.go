@@ -90,7 +90,7 @@ func (s *Service) PostPayrollRun(ctx context.Context, in PayrollRunInput) (*repo
 	if err != nil {
 		return nil, err
 	}
-	posted, err := s.PostJournalEntry(ctx, entry.ID)
+	posted, err := s.PostJournalEntry(ctx, entry.ID, "system:payroll")
 	if err != nil {
 		return nil, err
 	}

@@ -44,19 +44,14 @@ func (h *Handlers) Ready(c *gin.Context) {
 		})
 		return
 	}
+	// Redis is an optional cache, not a hard dependency: a flap degrades, it
+	// does not take the service out of rotation. Postgres is the only readiness
+	// gate (the service degrades-don't-die on Redis — see chainaudit/auditlog).
 	redisOK := true
 	if h.Redis != nil {
 		if err := h.Redis.Ping(ctx).Err(); err != nil {
 			redisOK = false
 		}
-	}
-	if !redisOK {
-		c.JSON(http.StatusServiceUnavailable, gin.H{
-			"status":  "not_ready",
-			"service": h.Cfg.ServiceName,
-			"redis":   false,
-		})
-		return
 	}
 	c.JSON(http.StatusOK, gin.H{
 		"status":   "ready",
@@ -72,6 +67,9 @@ func (h *Handlers) AppendAudit(c *gin.Context) {
 		apierr.JSONStatus(c, http.StatusBadRequest, err.Error())
 		return
 	}
+	// Actor is the authenticated principal, never client-supplied — otherwise
+	// the audit trail can be attributed to anyone.
+	body.Actor = chainActor(c)
 	ev, err := h.ChainAudit.Append(c.Request.Context(), body)
 	if err != nil {
 		apierr.JSONStatus(c, http.StatusInternalServerError, err.Error())
@@ -88,6 +86,20 @@ func (h *Handlers) ListAudit(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"events": list})
+}
+
+// VerifyAudit recomputes the hash chain and reports whether it is intact.
+func (h *Handlers) VerifyAudit(c *gin.Context) {
+	res, err := h.ChainAudit.Verify(c.Request.Context())
+	if err != nil {
+		apierr.JSONStatus(c, http.StatusInternalServerError, err.Error())
+		return
+	}
+	status := http.StatusOK
+	if !res.Valid {
+		status = http.StatusConflict
+	}
+	c.JSON(status, res)
 }
 
 func (h *Handlers) ListTableRows(c *gin.Context) {

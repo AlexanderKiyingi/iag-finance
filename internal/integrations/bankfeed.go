@@ -118,9 +118,11 @@ func (h *httpBankFeed) FetchLines(ctx context.Context, accountCode string, from,
 		if err != nil {
 			continue
 		}
-		dir := strings.ToLower(l.Direction)
+		// Drop lines with an unparseable direction rather than silently
+		// defaulting to "debit" (which would post money-out for malformed data).
+		dir := strings.ToLower(strings.TrimSpace(l.Direction))
 		if dir != "credit" && dir != "debit" {
-			dir = "debit"
+			continue
 		}
 		out = append(out, BankFeedLine{
 			Date: d, Description: l.Description, Payee: l.Payee,

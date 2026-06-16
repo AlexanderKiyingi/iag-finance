@@ -1,17 +1,22 @@
 package ledger
 
 import (
-	"math"
 	"regexp"
+
+	"github.com/shopspring/decimal"
 )
 
-var openPeriodRE = regexp.MustCompile(`^2026-(04|05)$`)
+// periodRE matches a well-formed accounting period 'YYYY-MM'. (The previous
+// implementation hard-coded ^2026-(04|05)$, which silently rejected every other
+// month.) Authoritative period-close enforcement lives in PostJournalEntry,
+// which checks fiscal_periods in the database; this is a UI pre-flight check.
+var periodRE = regexp.MustCompile(`^\d{4}-(0[1-9]|1[0-2])$`)
 
 type ValidateBody struct {
-	Debit  float64 `json:"debit"`
-	Credit float64 `json:"credit"`
-	Period string  `json:"period"`
-	Role   string  `json:"role"`
+	Debit  string `json:"debit"`
+	Credit string `json:"credit"`
+	Period string `json:"period"`
+	Role   string `json:"role"`
 }
 
 type ValidateResult struct {
@@ -19,21 +24,28 @@ type ValidateResult struct {
 	Issues []string `json:"issues,omitempty"`
 }
 
-// ValidatePosting mirrors the browser posting simulator in iag-finance.html (validatePostingSimulator).
+// ValidatePosting is a pre-flight simulator for the posting UI. It uses decimal
+// money (not float) and validates the period format; it does not replace the
+// server-side balance constraint and fiscal-period checks enforced on a real post.
 func ValidatePosting(b ValidateBody) ValidateResult {
-	canPost := b.Role == "CFO" || b.Role == "Controller"
-	openPeriod := openPeriodRE.MatchString(b.Period)
-	balanced := math.Abs(b.Debit-b.Credit) < 0.01 && b.Debit > 0
-
 	var issues []string
-	if !balanced {
+
+	debit, errD := decimal.NewFromString(b.Debit)
+	credit, errC := decimal.NewFromString(b.Credit)
+	switch {
+	case errD != nil || errC != nil:
+		issues = append(issues, "Debit and credit must be valid amounts")
+	case !debit.Equal(credit) || debit.LessThanOrEqual(decimal.Zero):
 		issues = append(issues, "Debit and credit totals do not balance")
 	}
-	if !openPeriod {
-		issues = append(issues, "Posting period is closed or invalid")
+
+	if !periodRE.MatchString(b.Period) {
+		issues = append(issues, "Posting period must be a valid 'YYYY-MM'")
 	}
-	if !canPost {
+
+	if b.Role != "CFO" && b.Role != "Controller" {
 		issues = append(issues, b.Role+" can draft but cannot post")
 	}
+
 	return ValidateResult{OK: len(issues) == 0, Issues: issues}
 }

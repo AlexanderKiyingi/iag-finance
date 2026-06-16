@@ -14,6 +14,7 @@ import (
 type Config struct {
 	ServiceName       string
 	Environment       string
+	BaseCurrency      string
 	Port              int
 	DatabaseURL       string
 	RedisURL          string
@@ -118,6 +119,7 @@ func Load() (Config, error) {
 
 	cfg := Config{
 		ServiceName:         getEnv("SERVICE_NAME", "finance"),
+		BaseCurrency:        strings.ToUpper(getEnv("BASE_CURRENCY", "UGX")),
 		Environment:         env,
 		Port:                port,
 		DatabaseURL:         dbURL,
@@ -180,6 +182,18 @@ func (c Config) validate() error {
 		}
 		if c.ServiceClientSecret == "" {
 			return fmt.Errorf("SERVICE_CLIENT_SECRET is required in production")
+		}
+	}
+	// Fail fast when a live EFRIS mode is selected without its credentials,
+	// rather than discovering the gap mid-submission to the tax authority.
+	switch c.EFRISMode {
+	case "http":
+		if c.EFRISBaseURL == "" || c.EFRISAPIKey == "" || c.EFRISTIN == "" {
+			return fmt.Errorf("URA_EFRIS_MODE=http requires URA_EFRIS_BASE_URL, URA_EFRIS_API_KEY and URA_EFRIS_TIN")
+		}
+	case "ura_s2s":
+		if c.EFRISS2SURL == "" || c.EFRISAESKey == "" || c.EFRISTIN == "" {
+			return fmt.Errorf("URA_EFRIS_MODE=ura_s2s requires URA_EFRIS_S2S_URL, URA_EFRIS_AES_KEY and URA_EFRIS_TIN")
 		}
 	}
 	return nil

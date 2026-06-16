@@ -67,8 +67,9 @@ func main() {
 		}
 	}
 
-	ledgerSvc, auditSvc := api.NewLedger(pool)
+	ledgerSvc, auditSvc := api.NewLedger(pool, cfg.BaseCurrency)
 	repo := repository.New(pool)
+	repo.SetBaseCurrency(cfg.BaseCurrency)
 
 	if cfg.ServiceClientSecret != "" {
 		go registerPermissionsLoop(ctx, cfg)
@@ -143,6 +144,11 @@ func main() {
 
 	if cfg.OverdueCronEnabled {
 		go worker.NewOverdueNotifier(cfg, ledgerSvc, eventBus).Run(ctx)
+	}
+
+	// Relay the transactional outbox to the broker (no-op when publishing is off).
+	if eventBus != nil && eventBus.Enabled() {
+		go worker.NewOutboxRelay(repo, eventBus, 5*time.Second).Run(ctx)
 	}
 
 	// Shared producer used for the DLQ. Re-used by both the iag.finance and

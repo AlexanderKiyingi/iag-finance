@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"log/slog"
+	"strings"
 
 	platformevents "github.com/alvor-technologies/iag-platform-go/events"
 	"github.com/shopspring/decimal"
@@ -84,6 +85,9 @@ type saleCompletedData struct {
 	Currency    string `json:"currency"`
 	CustomerRef string `json:"customerRef"`
 	DocumentRef string `json:"documentRef"`
+	// VatAmount, when present, is the VAT portion already included in Amount; the
+	// booking splits it to the VAT control account (output VAT). Absent → no split.
+	VatAmount string `json:"vatAmount"`
 }
 
 type invoicePostedData struct {
@@ -91,6 +95,10 @@ type invoicePostedData struct {
 	Currency    string `json:"currency"`
 	VendorRef   string `json:"vendorRef"`
 	DocumentRef string `json:"documentRef"`
+	// PoRef lets the booking clear a GR/IR accrual raised at goods receipt.
+	// VatAmount, when present, is the VAT portion already included in Amount.
+	PoRef     string `json:"poRef"`
+	VatAmount string `json:"vatAmount"`
 }
 
 type fleetFuelRecordedData struct {
@@ -115,10 +123,19 @@ func (h *financeHandler) handleSaleCompleted(ctx context.Context, env platformev
 	if data.DocumentRef != "" {
 		desc += " — " + data.DocumentRef
 	}
-	entry, err := h.ledger.BookFromEvent(ctx, env.ID, env.Type, env.Source, env.CorrelationID, desc, []ledger.LineInput{
-		{AccountCode: "1100", Debit: amount, Memo: "AR from sale"},
-		{AccountCode: "4000", Credit: amount, Memo: "Revenue"},
-	})
+	// Split out output VAT only when the event carries a VAT amount; otherwise the
+	// full amount is revenue (single-line credit, unchanged behaviour).
+	vat := parseAmount(data.VatAmount)
+	lines := []ledger.LineInput{{AccountCode: "1100", Debit: amount, Memo: "AR from sale"}}
+	if vat.IsPositive() && vat.LessThan(amount) {
+		lines = append(lines,
+			ledger.LineInput{AccountCode: "4000", Credit: amount.Sub(vat), Memo: "Revenue"},
+			ledger.LineInput{AccountCode: "2100", Credit: vat, Memo: "Output VAT"},
+		)
+	} else {
+		lines = append(lines, ledger.LineInput{AccountCode: "4000", Credit: amount, Memo: "Revenue"})
+	}
+	entry, err := h.ledger.BookFromEvent(ctx, env.ID, env.Type, env.Source, env.CorrelationID, desc, data.Currency, lines)
 	if err == nil {
 		h.logBooked(ctx, env, entry)
 		h.linkOpenItem(ctx, env.Type, data.DocumentRef, entry, env.ID)
@@ -139,10 +156,10 @@ func (h *financeHandler) handleInvoicePosted(ctx context.Context, env platformev
 	if data.DocumentRef != "" {
 		desc += " — " + data.DocumentRef
 	}
-	entry, err := h.ledger.BookFromEvent(ctx, env.ID, env.Type, env.Source, env.CorrelationID, desc, []ledger.LineInput{
-		{AccountCode: "5000", Debit: amount, Memo: "Expense / COGS"},
-		{AccountCode: "2000", Credit: amount, Memo: "AP liability"},
-	})
+	// Books AP, clearing any GR/IR accrual for the PO and splitting VAT when the
+	// event carries it. poRef "" + vat 0 reduces to the prior Dr 5000 / Cr 2000.
+	entry, err := h.ledger.BookAPInvoice(ctx, env.ID, env.Type, env.Source, env.CorrelationID, desc,
+		data.Currency, strings.TrimSpace(data.PoRef), amount, parseAmount(data.VatAmount))
 	if err == nil {
 		h.logBooked(ctx, env, entry)
 		h.linkOpenItem(ctx, env.Type, data.DocumentRef, entry, env.ID)
@@ -166,7 +183,7 @@ func (h *financeHandler) handleFleetFuelRecorded(ctx context.Context, env platfo
 	if data.VehicleID != "" {
 		desc += " (" + data.VehicleID + ")"
 	}
-	entry, err := h.ledger.BookFromEvent(ctx, env.ID, env.Type, env.Source, env.CorrelationID, desc, []ledger.LineInput{
+	entry, err := h.ledger.BookFromEvent(ctx, env.ID, env.Type, env.Source, env.CorrelationID, desc, data.Currency, []ledger.LineInput{
 		{AccountCode: "5000", Debit: amount, Memo: "Fleet fuel expense"},
 		{AccountCode: "2000", Credit: amount, Memo: "AP / fuel payable"},
 	})

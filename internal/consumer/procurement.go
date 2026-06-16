@@ -4,18 +4,20 @@ import (
 	"context"
 	"errors"
 	"log/slog"
-	"strconv"
 	"strings"
 	"time"
 
 	platformevents "github.com/alvor-technologies/iag-platform-go/events"
+	"github.com/shopspring/decimal"
 
 	"github.com/iag-finance/backend/internal/events"
 	"github.com/iag-finance/backend/internal/ledger"
+	"github.com/iag-finance/backend/internal/repository"
 )
 
 const (
 	procurementInvoiceReceived = "procurement.invoice.received"
+	procurementGrnPosted       = "procurement.grn.posted"
 	// contractsPaymentAuthorized is emitted by iag-contract-management when a
 	// milestone payment clears Payment Authorization — finance books the AP.
 	contractsPaymentAuthorized = "contracts.payment.authorized"
@@ -30,11 +32,43 @@ func (h *procurementHandler) Handle(ctx context.Context, env platformevents.Enve
 	switch env.Type {
 	case procurementInvoiceReceived:
 		return h.handleInvoiceReceived(ctx, env)
+	case procurementGrnPosted:
+		return h.handleGRNPosted(ctx, env)
 	case contractsPaymentAuthorized:
 		return h.handlePaymentAuthorized(ctx, env)
 	default:
 		return nil
 	}
+}
+
+// handleGRNPosted accrues the AP liability when goods are received: it books the
+// GR/IR accrual (Dr expense / Cr GR-IR clearing) for the received value carried
+// on the event, keyed to the PO so the later invoice clears it. No-op for events
+// without a PO ref or value (older emitters, or receipts with no priced lines).
+func (h *procurementHandler) handleGRNPosted(ctx context.Context, env platformevents.Envelope) error {
+	data := env.Data
+	if data == nil {
+		return nil
+	}
+	poRef, _ := data["po_id"].(string)
+	poRef = strings.TrimSpace(poRef)
+	amountStr, _ := data["amount"].(string)
+	if poRef == "" || strings.TrimSpace(amountStr) == "" {
+		return nil
+	}
+	value := parseAmount(amountStr)
+	if value.IsZero() {
+		return nil
+	}
+	currency, _ := data["currency"].(string)
+	if strings.TrimSpace(currency) == "" {
+		currency = "UGX"
+	}
+	if _, err := h.ledger.BookGRNAccrual(ctx, env.ID, env.Type, env.Source, env.CorrelationID, currency, poRef, value); err != nil {
+		return err
+	}
+	slog.Info("finance GR/IR accrual from GRN", "poRef", poRef, "amount", amountStr)
+	return nil
 }
 
 // handlePaymentAuthorized books an AP open item for an authorized contract
@@ -59,11 +93,12 @@ func (h *procurementHandler) handlePaymentAuthorized(ctx context.Context, env pl
 	}
 	number, _ := data["contractNumber"].(string)
 	documentRef := "CT-PAY-" + paymentID
-	amount := strconv.FormatInt(int64(payable), 10)
+	// Keep cents: int64(payable) truncated the fractional currency unit.
+	amount := decimal.NewFromFloat(payable).StringFixed(2)
 	desc := strings.TrimSpace("Contract milestone payment " + number)
-	item, err := h.ledger.CreateAPItem(ctx, vendorRef, documentRef, desc, amount, "UGX", nil)
+	item, err := h.ledger.CreateAPItem(ctx, vendorRef, documentRef, desc, amount, "UGX", nil, nil)
 	if err != nil {
-		if strings.Contains(err.Error(), "duplicate") || strings.Contains(err.Error(), "unique") {
+		if repository.IsUniqueViolation(err) {
 			slog.Debug("finance contract payment AP already exists", "documentRef", documentRef)
 			return nil
 		}
@@ -71,6 +106,32 @@ func (h *procurementHandler) handlePaymentAuthorized(ctx context.Context, env pl
 	}
 	slog.Info("finance AP item from contract payment", "documentRef", documentRef, "id", item.ID)
 	return nil
+}
+
+// invoicePostedOutbox builds the invoice.posted outbox event for the consumer,
+// or nil when publishing is disabled. Written atomically with the AP item.
+func (h *procurementHandler) invoicePostedOutbox(documentRef, vendorRef, amount, currency, poRef, vatAmount string) *repository.OutboxEvent {
+	if h.bus == nil || !h.bus.Enabled() {
+		return nil
+	}
+	payload := map[string]any{
+		"amount": amount, "currency": currency, "vendorRef": vendorRef, "documentRef": documentRef,
+	}
+	// Carry the PO ref and any VAT through to the GL-booking handler so it can
+	// clear a GR/IR accrual and split input VAT.
+	if poRef != "" {
+		payload["poRef"] = poRef
+	}
+	if vatAmount != "" {
+		payload["vatAmount"] = vatAmount
+	}
+	return &repository.OutboxEvent{
+		Topic:        h.bus.FinanceTopic(),
+		PartitionKey: documentRef,
+		EventID:      events.TypeInvoicePosted + ":" + documentRef,
+		EventType:    events.TypeInvoicePosted,
+		Payload:      payload,
+	}
 }
 
 func (h *procurementHandler) handleInvoiceReceived(ctx context.Context, env platformevents.Envelope) error {
@@ -100,19 +161,19 @@ func (h *procurementHandler) handleInvoiceReceived(ctx context.Context, env plat
 		due = &t
 	}
 	desc, _ := data["description"].(string)
-	item, err := h.ledger.CreateAPItem(ctx, vendorRef, documentRef, desc, amount, currency, due)
+	poRef, _ := data["poRef"].(string)
+	poRef = strings.TrimSpace(poRef)
+	vatAmount, _ := data["vatAmount"].(string)
+	vatAmount = strings.TrimSpace(vatAmount)
+	// invoice.posted is enqueued to the outbox in the same tx as the AP item.
+	outbox := h.invoicePostedOutbox(documentRef, vendorRef, amount, currency, poRef, vatAmount)
+	item, err := h.ledger.CreateAPItem(ctx, vendorRef, documentRef, desc, amount, currency, due, outbox)
 	if err != nil {
-		if strings.Contains(err.Error(), "duplicate") || strings.Contains(err.Error(), "unique") {
+		if repository.IsUniqueViolation(err) {
 			slog.Debug("finance procurement AP already exists", "documentRef", documentRef)
 			return nil
 		}
 		return err
-	}
-	if h.bus != nil && h.bus.Enabled() {
-		eventID := events.TypeInvoicePosted + ":" + documentRef
-		h.bus.Publish(ctx, eventID, events.TypeInvoicePosted, map[string]any{
-			"amount": amount, "currency": currency, "vendorRef": vendorRef, "documentRef": documentRef,
-		}, documentRef)
 	}
 	slog.Info("finance AP item from procurement", "documentRef", documentRef, "id", item.ID)
 	return nil

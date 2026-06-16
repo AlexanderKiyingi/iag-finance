@@ -153,6 +153,10 @@ func (u *uraS2SEFRIS) Submit(ctx context.Context, in EFRISSubmitRequest) (EFRISS
 	return EFRISSubmitResult{Status: "acknowledged", URAReceipt: receipt}, nil
 }
 
+// aesEncryptECB encrypts with AES-ECB + PKCS#7. ECB is intentional here: the
+// URA EFRIS T109 server-to-server specification mandates AES/ECB/PKCS5Padding
+// for the request payload. It is required for interoperability with URA and
+// must not be changed to CBC/GCM without a corresponding URA spec change.
 func aesEncryptECB(plain, key []byte) ([]byte, error) {
 	block, err := aes.NewCipher(key)
 	if err != nil {

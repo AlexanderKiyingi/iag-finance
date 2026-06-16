@@ -36,7 +36,7 @@ func TestLinkAROpenItemByDocumentRef(t *testing.T) {
 	ctx := context.Background()
 
 	docRef := "TEST-AR-" + uuid.NewString()
-	item, err := repo.CreateAROpenItem(ctx, "CUST-1", docRef, "test sale", "1000", "UGX", nil, nil, nil)
+	item, err := repo.CreateAROpenItem(ctx, "CUST-1", docRef, "test sale", "1000", "UGX", nil, nil, nil, nil)
 	if err != nil {
 		t.Fatalf("create AR: %v", err)
 	}
@@ -86,7 +86,7 @@ func TestLinkAPOpenItemByDocumentRef(t *testing.T) {
 	ctx := context.Background()
 
 	docRef := "TEST-AP-" + uuid.NewString()
-	item, err := repo.CreateAPOpenItem(ctx, "VEND-1", docRef, "test invoice", "500", "UGX", nil, nil, nil)
+	item, err := repo.CreateAPOpenItem(ctx, "VEND-1", docRef, "test invoice", "500", "UGX", nil, nil, nil, nil)
 	if err != nil {
 		t.Fatalf("create AP: %v", err)
 	}

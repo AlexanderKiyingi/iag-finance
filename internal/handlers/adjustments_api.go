@@ -70,12 +70,16 @@ func (a *API) createAdjustment(c *gin.Context, direction, kind string) {
 		Reason:              req.Reason,
 		Amount:              amount,
 		Currency:            currency,
-	})
+	}, chainActor(c))
 	if err != nil {
 		status := http.StatusConflict
 		switch {
 		case errors.Is(err, ledger.ErrInvalidAdjustment):
 			status = http.StatusBadRequest
+		case errors.Is(err, repository.ErrAdjustmentTooLarge):
+			status = http.StatusUnprocessableEntity
+		case errors.Is(err, ledger.ErrPeriodClosed):
+			status = http.StatusUnprocessableEntity
 		case errors.Is(err, repository.ErrOriginalNotFound):
 			status = http.StatusNotFound
 		}

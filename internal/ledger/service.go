@@ -20,6 +20,11 @@ var (
 	ErrDuplicateEvent  = errors.New("source event already processed")
 	ErrAccountNotFound = errors.New("account not found")
 	ErrPeriodClosed    = errors.New("accounting period is closed")
+
+	// Re-exported so handlers map repository reversal errors without importing
+	// the repository package directly.
+	ErrNotReversible = repository.ErrNotReversible
+	ErrEntryNotFound = repository.ErrEntryNotFound
 )
 
 type LineInput struct {
@@ -30,12 +35,13 @@ type LineInput struct {
 }
 
 type CreateEntryInput struct {
-	Description   string
-	Lines         []LineInput
-	SourceEventID *string
-	SourceService *string
-	CorrelationID *string
-	CreatedBy     *uuid.UUID
+	Description    string
+	Lines          []LineInput
+	SourceEventID  *string
+	SourceService  *string
+	CorrelationID  *string
+	CreatedBy      *uuid.UUID
+	AccountingDate *time.Time
 }
 
 type Service struct {
@@ -82,20 +88,20 @@ func (s *Service) PartyIDForPlatformUser(ctx context.Context, platformUserID uui
 	return s.repo.PartyIDForPlatformUser(ctx, platformUserID)
 }
 
-func (s *Service) CreateARItem(ctx context.Context, customerRef, documentRef, description, amount, currency string, dueDate *time.Time) (*domain.AROpenItem, error) {
-	return s.repo.CreateAROpenItem(ctx, customerRef, documentRef, description, amount, currency, dueDate, nil, nil)
+func (s *Service) CreateARItem(ctx context.Context, customerRef, documentRef, description, amount, currency string, dueDate *time.Time, outbox *repository.OutboxEvent) (*domain.AROpenItem, error) {
+	return s.repo.CreateAROpenItem(ctx, customerRef, documentRef, description, amount, currency, dueDate, nil, nil, outbox)
 }
 
-func (s *Service) CreateARItemWithBilling(ctx context.Context, customerRef, documentRef, description, amount, currency string, dueDate *time.Time, billingOrgID, billingIdentityID *uuid.UUID) (*domain.AROpenItem, error) {
-	return s.repo.CreateAROpenItemWithBilling(ctx, customerRef, documentRef, description, amount, currency, dueDate, billingOrgID, billingIdentityID)
+func (s *Service) CreateARItemWithBilling(ctx context.Context, customerRef, documentRef, description, amount, currency string, dueDate *time.Time, billingOrgID, billingIdentityID *uuid.UUID, outbox *repository.OutboxEvent) (*domain.AROpenItem, error) {
+	return s.repo.CreateAROpenItemWithBilling(ctx, customerRef, documentRef, description, amount, currency, dueDate, billingOrgID, billingIdentityID, outbox)
 }
 
 func (s *Service) GetAROpenItemByID(ctx context.Context, id uuid.UUID) (*domain.AROpenItem, error) {
 	return s.repo.GetAROpenItem(ctx, id)
 }
 
-func (s *Service) CreateAPItem(ctx context.Context, vendorRef, documentRef, description, amount, currency string, dueDate *time.Time) (*domain.APOpenItem, error) {
-	return s.repo.CreateAPOpenItem(ctx, vendorRef, documentRef, description, amount, currency, dueDate, nil, nil)
+func (s *Service) CreateAPItem(ctx context.Context, vendorRef, documentRef, description, amount, currency string, dueDate *time.Time, outbox *repository.OutboxEvent) (*domain.APOpenItem, error) {
+	return s.repo.CreateAPOpenItem(ctx, vendorRef, documentRef, description, amount, currency, dueDate, nil, nil, outbox)
 }
 
 // LinkARToJournal attaches a posted journal entry to an AR open item by document_ref.
@@ -114,20 +120,28 @@ func (s *Service) LinkAPToJournal(ctx context.Context, documentRef string, journ
 	return s.repo.LinkAPOpenItemByDocumentRef(ctx, documentRef, journalEntryID, sourceEventID)
 }
 
-func (s *Service) TrialBalance(ctx context.Context) ([]repository.TrialBalanceRow, error) {
-	return s.repo.TrialBalance(ctx)
+func (s *Service) TrialBalance(ctx context.Context, from, to *time.Time) ([]repository.TrialBalanceRow, error) {
+	return s.repo.TrialBalance(ctx, from, to)
 }
 
 func (s *Service) ARAging(ctx context.Context) ([]repository.ARAgingBucket, error) {
 	return s.repo.ARAging(ctx)
 }
 
-func (s *Service) ProfitAndLoss(ctx context.Context) ([]repository.PLRow, error) {
-	return s.repo.ProfitAndLoss(ctx)
+func (s *Service) APAging(ctx context.Context) ([]repository.ARAgingBucket, error) {
+	return s.repo.APAging(ctx)
 }
 
-func (s *Service) BalanceSheet(ctx context.Context) ([]repository.BalanceSheetSection, error) {
-	return s.repo.BalanceSheet(ctx)
+func (s *Service) GLAccountDetail(ctx context.Context, code string, from, to *time.Time) ([]repository.GLAccountLine, error) {
+	return s.repo.GLAccountDetail(ctx, code, from, to)
+}
+
+func (s *Service) ProfitAndLoss(ctx context.Context, from, to *time.Time) ([]repository.PLRow, error) {
+	return s.repo.ProfitAndLoss(ctx, from, to)
+}
+
+func (s *Service) BalanceSheet(ctx context.Context, asOf *time.Time) ([]repository.BalanceSheetSection, error) {
+	return s.repo.BalanceSheet(ctx, asOf)
 }
 
 func (s *Service) FinanceSummary(ctx context.Context) (repository.FinanceSummary, error) {
@@ -162,19 +176,24 @@ func (s *Service) CreateJournalEntry(ctx context.Context, in CreateEntryInput) (
 		return nil, err
 	}
 
+	var accDate time.Time
+	if in.AccountingDate != nil {
+		accDate = in.AccountingDate.UTC()
+	}
 	return s.repo.CreateJournalEntry(ctx, repository.CreateJournalParams{
-		EntryNumber:   entryNumber,
-		Description:   in.Description,
-		Status:        "draft",
-		SourceEventID: in.SourceEventID,
-		SourceService: in.SourceService,
-		CorrelationID: in.CorrelationID,
-		CreatedBy:     in.CreatedBy,
-		Lines:         resolved,
+		EntryNumber:    entryNumber,
+		Description:    in.Description,
+		Status:         "draft",
+		SourceEventID:  in.SourceEventID,
+		SourceService:  in.SourceService,
+		CorrelationID:  in.CorrelationID,
+		CreatedBy:      in.CreatedBy,
+		AccountingDate: accDate,
+		Lines:          resolved,
 	})
 }
 
-func (s *Service) PostJournalEntry(ctx context.Context, id uuid.UUID) (*domain.JournalEntry, error) {
+func (s *Service) PostJournalEntry(ctx context.Context, id uuid.UUID, actor string) (*domain.JournalEntry, error) {
 	entry, err := s.repo.GetJournalEntry(ctx, id)
 	if err != nil {
 		return nil, err
@@ -188,19 +207,47 @@ func (s *Service) PostJournalEntry(ctx context.Context, id uuid.UUID) (*domain.J
 	if err := validateEntryLines(entry.Lines); err != nil {
 		return nil, err
 	}
-	// Period-close control: refuse to post into a month an operator has
-	// closed. Periods are open by default, so this only bites once a close
-	// has been issued. The posting date is "now" — when the entry hits the
-	// ledger — which is the date that determines the period.
+	// Guarded, single-statement transition inside one tx: the WHERE
+	// status='draft' filter is the race guard (a concurrent post matches zero
+	// rows), and the fiscal-period close is checked against the entry's own
+	// accounting_date — not wall-clock — so closing a month protects entries
+	// dated to it regardless of when they are posted.
 	postingDate := time.Now().UTC()
-	closed, err := s.repo.IsPeriodClosed(ctx, postingDate.Format("2006-01"))
+	posted, err := s.repo.MarkEntryPosted(ctx, id, postingDate, &repository.AuditInfo{
+		Actor:     actorOrSystem(actor),
+		EventType: "ledger.posted",
+		Message:   fmt.Sprintf("posted %s (%s)", entry.EntryNumber, entry.Description),
+	})
 	if err != nil {
+		if errors.Is(err, repository.ErrPeriodClosed) {
+			return nil, ErrPeriodClosed
+		}
 		return nil, err
 	}
-	if closed {
-		return nil, ErrPeriodClosed
+	if !posted {
+		return nil, ErrInvalidStatus
 	}
-	return s.repo.UpdateJournalStatus(ctx, id, "posted", postingDate)
+	return s.repo.GetJournalEntry(ctx, id)
+}
+
+// actorOrSystem falls back to a non-empty system actor so a chain entry is
+// always attributed even on unauthenticated/internal paths.
+func actorOrSystem(actor string) string {
+	if actor == "" {
+		return "system"
+	}
+	return actor
+}
+
+// ReverseJournalEntry posts a reversing entry that cancels a posted entry and
+// marks the original 'reversed'. The correct, audit-friendly way to undo a
+// posted entry — the GL is never edited in place.
+func (s *Service) ReverseJournalEntry(ctx context.Context, id uuid.UUID, reason, actor string) (*domain.JournalEntry, error) {
+	return s.repo.ReverseEntry(ctx, id, reason, &repository.AuditInfo{
+		Actor:     actorOrSystem(actor),
+		EventType: "ledger.reversed",
+		Message:   fmt.Sprintf("reversed entry %s: %s", id, reason),
+	})
 }
 
 // FiscalPeriods lists every period with an explicit open/closed status.
@@ -218,37 +265,49 @@ func (s *Service) ReopenPeriod(ctx context.Context, period string, by *uuid.UUID
 	return s.repo.SetPeriodStatus(ctx, period, "open", by)
 }
 
-func (s *Service) BookFromEvent(ctx context.Context, eventID, eventType, source, correlationID, description string, lines []LineInput) (*domain.JournalEntry, error) {
-	processed, err := s.repo.IsEventProcessed(ctx, eventID)
+func (s *Service) BookFromEvent(ctx context.Context, eventID, eventType, source, correlationID, description, currency string, lines []LineInput) (*domain.JournalEntry, error) {
+	if len(lines) == 0 {
+		return nil, ErrEmptyEntry
+	}
+	if err := validateBalance(lines); err != nil {
+		return nil, err
+	}
+
+	resolved, err := s.resolveLines(ctx, lines)
 	if err != nil {
 		return nil, err
 	}
-	if processed {
-		return s.repo.GetJournalEntryBySourceEvent(ctx, eventID)
+
+	// Posting date is "now" — the instant the event hits the ledger. Refuse to
+	// book into a period an operator has closed (open by default).
+	postingDate := time.Now().UTC()
+	closed, err := s.repo.IsPeriodClosed(ctx, postingDate.Format("2006-01"))
+	if err != nil {
+		return nil, err
+	}
+	if closed {
+		return nil, ErrPeriodClosed
 	}
 
-	entry, err := s.CreateJournalEntry(ctx, CreateEntryInput{
+	// Convert to base at the event-date rate (defaults to 1 for base currency).
+	fxRate := s.repo.RateOrOne(ctx, currency, postingDate)
+
+	// Single transaction: entry + lines + processed_events commit together, and
+	// the partial-unique index on source_event_id makes concurrent redelivery
+	// idempotent (returns the already-booked entry instead of duplicating).
+	return s.repo.BookPostedEntry(ctx, repository.CreateJournalParams{
 		Description:   description,
-		Lines:         lines,
 		SourceEventID: &eventID,
-		SourceService: &source,
+		SourceService: optionalString(source),
 		CorrelationID: optionalString(correlationID),
+		Currency:      currency,
+		FXRate:        fxRate,
+		Lines:         resolved,
+	}, eventID, eventType, postingDate, nil, &repository.AuditInfo{
+		Actor:     "system:" + source,
+		EventType: "ledger.booked",
+		Message:   fmt.Sprintf("%s booked from %s (%s)", eventType, source, description),
 	})
-	if err != nil {
-		if errors.Is(err, ErrDuplicateEvent) {
-			return s.repo.GetJournalEntryBySourceEvent(ctx, eventID)
-		}
-		return nil, err
-	}
-
-	posted, err := s.PostJournalEntry(ctx, entry.ID)
-	if err != nil {
-		return nil, err
-	}
-	if err := s.repo.MarkEventProcessed(ctx, eventID, eventType); err != nil {
-		return nil, err
-	}
-	return posted, nil
 }
 
 func validateBalance(lines []LineInput) error {

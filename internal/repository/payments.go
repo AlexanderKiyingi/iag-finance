@@ -88,17 +88,21 @@ func (r *Repository) ApplyPayment(ctx context.Context, p ApplyPaymentParams) (*d
 		}
 		return nil, err
 	}
-	total, _ := decimal.NewFromString(totalStr)
-	paid, _ := decimal.NewFromString(paidStr)
+	total, err := decimal.NewFromString(totalStr)
+	if err != nil {
+		return nil, fmt.Errorf("open item amount %q: %w", totalStr, err)
+	}
+	paid, err := decimal.NewFromString(paidStr)
+	if err != nil {
+		return nil, fmt.Errorf("open item amount_paid %q: %w", paidStr, err)
+	}
 	newPaid := paid.Add(p.Amount)
 	if newPaid.GreaterThan(total) {
 		return nil, ErrPaymentExceeds
 	}
 	status := "partial"
-	if newPaid.Equal(total) || newPaid.GreaterThan(total) {
+	if newPaid.GreaterThanOrEqual(total) {
 		status = "closed"
-	} else if newPaid.IsZero() {
-		status = "open"
 	}
 
 	_, err = tx.Exec(ctx, fmt.Sprintf(`
@@ -134,11 +138,16 @@ type PaymentWithJournalParams struct {
 	OpenItemID                                             uuid.UUID
 	Amount                                                 decimal.Decimal
 	Currency, PaymentRef                                   string
+	FXRate                                                 decimal.Decimal // document rate → base (zero → 1)
 	Lines                                                  []ResolvedLine
+	// Outbox, when set, is enqueued in the same transaction as the payment so a
+	// downstream settlement signal (finance.payment.made) commits atomically with
+	// the GL/open-item update or not at all.
+	Outbox *OutboxEvent
 }
 
 // ApplyPaymentWithJournal records payment + GL in one transaction (idempotent on EventID).
-func (r *Repository) ApplyPaymentWithJournal(ctx context.Context, p PaymentWithJournalParams) (*domain.Payment, error) {
+func (r *Repository) ApplyPaymentWithJournal(ctx context.Context, p PaymentWithJournalParams, audit *AuditInfo) (*domain.Payment, error) {
 	processed, err := r.IsEventProcessed(ctx, p.EventID)
 	if err != nil {
 		return nil, err
@@ -179,28 +188,24 @@ func (r *Repository) ApplyPaymentWithJournal(ctx context.Context, p PaymentWithJ
 		}
 		return nil, err
 	}
-	total, _ := decimal.NewFromString(totalStr)
-	paid, _ := decimal.NewFromString(paidStr)
+	total, err := decimal.NewFromString(totalStr)
+	if err != nil {
+		return nil, fmt.Errorf("open item amount %q: %w", totalStr, err)
+	}
+	paid, err := decimal.NewFromString(paidStr)
+	if err != nil {
+		return nil, fmt.Errorf("open item amount_paid %q: %w", paidStr, err)
+	}
 	newPaid := paid.Add(p.Amount)
 	if newPaid.GreaterThan(total) {
 		return nil, ErrPaymentExceeds
 	}
 	status := "partial"
-	if newPaid.Equal(total) || newPaid.GreaterThan(total) {
+	if newPaid.GreaterThanOrEqual(total) {
 		status = "closed"
-	} else if newPaid.IsZero() {
-		status = "open"
-	}
-
-	var entryNumber string
-	if err := tx.QueryRow(ctx, `
-		SELECT 'JE-' || LPAD(nextval('journal_entry_number_seq')::text, 6, '0')
-	`).Scan(&entryNumber); err != nil {
-		return nil, err
 	}
 
 	postedAt := time.Now().UTC()
-	var entryID uuid.UUID
 	var corrID, srcEventID *string
 	if p.CorrelationID != "" {
 		corrID = &p.CorrelationID
@@ -209,31 +214,28 @@ func (r *Repository) ApplyPaymentWithJournal(ctx context.Context, p PaymentWithJ
 		srcEventID = &p.EventID
 	}
 	src := p.Source
-	err = tx.QueryRow(ctx, `
-		INSERT INTO journal_entries (
-			entry_number, description, status, source_event_id, source_service, correlation_id, posted_at
-		) VALUES ($1, $2, 'posted', $3, $4, $5, $6)
-		RETURNING id
-	`, entryNumber, p.Description, srcEventID, &src, corrID, postedAt).Scan(&entryID)
+
+	// Allocate the number and book the posted entry + lines only after the
+	// over-application check above, so a rejected payment doesn't burn a number.
+	entryNumber, err := nextEntryNumberTx(ctx, tx)
+	if err != nil {
+		return nil, err
+	}
+	entryID, err := r.insertPostedEntryTx(ctx, tx, CreateJournalParams{
+		EntryNumber:   entryNumber,
+		Description:   p.Description,
+		SourceEventID: srcEventID,
+		SourceService: &src,
+		CorrelationID: corrID,
+		Currency:      p.Currency,
+		FXRate:        p.FXRate,
+		Lines:         p.Lines,
+	}, postedAt)
 	if err != nil {
 		return nil, err
 	}
 
-	for _, line := range p.Lines {
-		_, err = tx.Exec(ctx, `
-			INSERT INTO journal_lines (journal_entry_id, account_id, debit, credit, memo, line_order)
-			VALUES ($1, $2, $3, $4, $5, $6)
-		`, entryID, line.AccountID, line.Debit, line.Credit, line.Memo, line.LineOrder)
-		if err != nil {
-			return nil, err
-		}
-	}
-
-	_, err = tx.Exec(ctx, `
-		INSERT INTO processed_events (event_id, event_type) VALUES ($1, $2)
-		ON CONFLICT (event_id) DO NOTHING
-	`, p.EventID, p.EventType)
-	if err != nil {
+	if _, err := markProcessedTx(ctx, tx, p.EventID, p.EventType); err != nil {
 		return nil, err
 	}
 
@@ -256,6 +258,14 @@ func (r *Repository) ApplyPaymentWithJournal(ctx context.Context, p PaymentWithJ
 	)
 	if err != nil {
 		return nil, err
+	}
+	if err := appendAudit(ctx, tx, audit); err != nil {
+		return nil, err
+	}
+	if p.Outbox != nil {
+		if err := enqueueOutboxTx(ctx, tx, *p.Outbox); err != nil {
+			return nil, err
+		}
 	}
 	if err := tx.Commit(ctx); err != nil {
 		return nil, err

@@ -97,6 +97,7 @@ func (h *erpHandler) handleEmployee(ctx context.Context, env platformevents.Enve
 		OperatorRef:    strings.TrimSpace(data.OperatorRef),
 		EventID:        env.ID,
 		EventType:      env.Type,
+		EventTime:      parseEnvTime(env.Time),
 	})
 	if err != nil {
 		return err
@@ -177,4 +178,17 @@ func ERPHandledTypes() []string {
 		erpEmployeeCreated, erpEmployeeUpdated, erpEmployeeTerminated,
 		erpLeaveApproved, erpLeaveRejected, erpLeaveCancelled,
 	}
+}
+
+// parseEnvTime parses the envelope's RFC3339 time, falling back to the zero
+// time (treated as "epoch" by the mirror's ordering guard) when absent/invalid.
+func parseEnvTime(s string) time.Time {
+	if s == "" {
+		return time.Time{}
+	}
+	t, err := time.Parse(time.RFC3339Nano, s)
+	if err != nil {
+		return time.Time{}
+	}
+	return t.UTC()
 }

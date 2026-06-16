@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/shopspring/decimal"
@@ -27,7 +28,7 @@ type AdjustmentInput struct {
 	Currency            string
 }
 
-func (s *Service) CreateAdjustment(ctx context.Context, in AdjustmentInput) (*domain.Adjustment, error) {
+func (s *Service) CreateAdjustment(ctx context.Context, in AdjustmentInput, actor string) (*domain.Adjustment, error) {
 	in.Kind = strings.ToLower(strings.TrimSpace(in.Kind))
 	in.Direction = strings.ToLower(strings.TrimSpace(in.Direction))
 	if in.Kind != "credit_note" && in.Kind != "debit_note" {
@@ -108,51 +109,52 @@ func (s *Service) CreateAdjustment(ctx context.Context, in AdjustmentInput) (*do
 	}
 
 	eventID := fmt.Sprintf("adjustment.%s:%s:%s", in.Direction, in.Kind, docRef)
+	// Convert the note to base at the original document's rate so the adjustment
+	// nets against it in base currency (historical method).
+	fxRate, err := s.repo.OpenItemFXRateByDocRef(ctx, in.Direction, in.OriginalDocumentRef)
+	if err != nil {
+		return nil, err
+	}
 	resolved, err := s.resolveLines(ctx, lines)
 	if err != nil {
 		return nil, err
 	}
 
-	entryNumber, err := s.repo.NextEntryNumber(ctx)
+	// Preserve the period-close control the old draft→post path enforced.
+	postedAt := time.Now().UTC()
+	closed, err := s.repo.IsPeriodClosed(ctx, postedAt.Format("2006-01"))
 	if err != nil {
 		return nil, err
 	}
-	entry, err := s.repo.CreateJournalEntry(ctx, repository.CreateJournalParams{
-		EntryNumber: entryNumber,
+	if closed {
+		return nil, ErrPeriodClosed
+	}
+
+	// One transaction: offsetting GL entry + floored open-item delta +
+	// finance_adjustments row, idempotent on eventID.
+	return s.repo.BookAdjustment(ctx, repository.BookAdjustmentParams{
+		EventID:     eventID,
+		EventType:   "finance.adjustment",
 		Description: desc,
-		Status:      "draft",
-		SourceEventID: &eventID,
-		SourceService: strPtr("iag.finance"),
-		Lines:         resolved,
-	})
-	if err != nil {
-		return nil, err
-	}
-	posted, err := s.PostJournalEntry(ctx, entry.ID)
-	if err != nil {
-		return nil, err
-	}
-
-	if in.Direction == "ar" {
-		if err := s.repo.AdjustARAmount(ctx, in.OriginalDocumentRef, delta); err != nil {
-			return nil, err
-		}
-	} else {
-		if err := s.repo.AdjustAPAmount(ctx, in.OriginalDocumentRef, delta); err != nil {
-			return nil, err
-		}
-	}
-
-	return s.repo.CreateAdjustment(ctx, repository.CreateAdjustmentParams{
-		Kind:                in.Kind,
-		Direction:           in.Direction,
-		OriginalDocumentRef: in.OriginalDocumentRef,
-		DocumentRef:         docRef,
-		PartyRef:            partyRef,
-		Amount:              in.Amount,
-		Currency:            currency,
-		Reason:              in.Reason,
-		JournalEntryID:      posted.ID,
+		Source:      "iag.finance",
+		Direction:   in.Direction,
+		Delta:       delta,
+		FXRate:      fxRate,
+		Lines:       resolved,
+		Adjustment: repository.CreateAdjustmentParams{
+			Kind:                in.Kind,
+			Direction:           in.Direction,
+			OriginalDocumentRef: in.OriginalDocumentRef,
+			DocumentRef:         docRef,
+			PartyRef:            partyRef,
+			Amount:              in.Amount,
+			Currency:            currency,
+			Reason:              in.Reason,
+		},
+	}, postedAt, &repository.AuditInfo{
+		Actor:     actorOrSystem(actor),
+		EventType: "adjustment." + in.Kind,
+		Message:   fmt.Sprintf("%s %s on %s for %s %s", in.Kind, docRef, in.OriginalDocumentRef, currency, in.Amount.String()),
 	})
 }
 
@@ -167,5 +169,3 @@ func (s *Service) ListARByCustomerRef(ctx context.Context, customerRef string, l
 func (s *Service) EnsurePaymentLinkToken(ctx context.Context, itemID uuid.UUID) (string, error) {
 	return s.repo.EnsurePaymentLinkToken(ctx, itemID)
 }
-
-func strPtr(s string) *string { return &s }

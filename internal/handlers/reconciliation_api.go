@@ -8,6 +8,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/alvor-technologies/iag-platform-go/apierr"
+	"github.com/iag-finance/backend/internal/ledger"
 	"github.com/iag-finance/backend/internal/repository"
 )
 
@@ -41,10 +42,7 @@ func (a *API) MatchStatementLine(c *gin.Context) {
 		return
 	}
 	if err := a.Ledger.MatchStatementLine(c.Request.Context(), lineID, req.DocumentRef); err != nil {
-		status := http.StatusConflict
-		if errors.Is(err, repository.ErrStatementLineNotFound) {
-			status = http.StatusNotFound
-		}
+		status := matchErrorStatus(err)
 		apierr.JSONStatus(c, status, err.Error())
 		return
 	}
@@ -59,7 +57,7 @@ func (a *API) AutoReconcileStatement(c *gin.Context) {
 	}
 	n, err := a.Ledger.AutoMatchStatement(c.Request.Context(), id)
 	if err != nil {
-		apierr.JSONStatus(c, http.StatusInternalServerError, err.Error())
+		apierr.JSONStatus(c, http.StatusInternalServerError, "could not auto-reconcile statement")
 		return
 	}
 	// Auto-matches are drafts: they are 'proposed', not posted. A reviewer
@@ -76,14 +74,24 @@ func (a *API) ConfirmStatementLine(c *gin.Context) {
 		return
 	}
 	if err := a.Ledger.ConfirmStatementLine(c.Request.Context(), lineID); err != nil {
-		status := http.StatusInternalServerError
-		if errors.Is(err, repository.ErrStatementLineNotFound) {
-			status = http.StatusNotFound
-		}
-		apierr.JSONStatus(c, status, err.Error())
+		apierr.JSONStatus(c, matchErrorStatus(err), err.Error())
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"status": "matched"})
+}
+
+// matchErrorStatus maps reconciliation/settlement errors to HTTP statuses.
+func matchErrorStatus(err error) int {
+	switch {
+	case errors.Is(err, repository.ErrStatementLineNotFound), errors.Is(err, repository.ErrOriginalNotFound):
+		return http.StatusNotFound
+	case errors.Is(err, ledger.ErrInvalidSettlement):
+		return http.StatusUnprocessableEntity
+	case errors.Is(err, repository.ErrPaymentExceeds):
+		return http.StatusConflict
+	default:
+		return http.StatusInternalServerError
+	}
 }
 
 // RejectStatementLine discards a proposed draft match.

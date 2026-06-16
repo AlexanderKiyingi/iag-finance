@@ -2,6 +2,7 @@ package tablerows
 
 import (
 	"context"
+	"html"
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -46,6 +47,9 @@ func (s *Store) List(ctx context.Context, tableID string) ([]Row, error) {
 }
 
 func (s *Store) Append(ctx context.Context, tableID, rowHTML string) (*Row, error) {
+	// Escape on store so caller-supplied markup cannot execute when the
+	// (deprecated) prototype UI replays it — neutralises stored XSS.
+	rowHTML = html.EscapeString(rowHTML)
 	var r Row
 	err := s.Pg.QueryRow(ctx, `
 		INSERT INTO table_rows (table_id, row_html)
