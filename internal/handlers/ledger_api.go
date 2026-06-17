@@ -207,6 +207,19 @@ func (a *API) PostJournalEntry(c *gin.Context) {
 		apierr.JSONStatus(c, http.StatusBadRequest, "invalid id")
 		return
 	}
+	// Tiered-approval enforcement: a high-value entry must be posted via the
+	// approvals workflow (which calls the service directly, bypassing this guard).
+	if a.Cfg.RequireApproval {
+		if draft, derr := a.Ledger.GetJournalEntry(c.Request.Context(), id); derr == nil && draft != nil {
+			total := decimal.Zero
+			for _, l := range draft.Lines {
+				total = total.Add(l.Debit)
+			}
+			if a.ApprovalGuard(c, total) {
+				return
+			}
+		}
+	}
 	entry, err := a.Ledger.PostJournalEntry(c.Request.Context(), id, chainActor(c))
 	if err != nil {
 		status := http.StatusBadRequest

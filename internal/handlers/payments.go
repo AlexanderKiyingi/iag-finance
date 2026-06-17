@@ -46,6 +46,11 @@ func (a *API) applyPayment(c *gin.Context, direction string) {
 		apierr.JSONStatus(c, http.StatusBadRequest, err.Error())
 		return
 	}
+	// Tiered-approval enforcement: a high-value payment must go through the
+	// approvals workflow (which calls ApplyAR/APPayment directly, bypassing this).
+	if a.ApprovalGuard(c, amount) {
+		return
+	}
 	// Idempotency: a stable key is required so a retry/double-click reuses the
 	// same payment_ref (deduped on processed_events + the unique index) instead
 	// of minting a fresh ref each call and double-paying.

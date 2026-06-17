@@ -73,6 +73,12 @@ type Config struct {
 	OverdueCronInterval  time.Duration
 	OverdueNotifyEmail   string
 	OverdueNotifyHref    string
+
+	// RequireApproval enforces tiered approval: a journal post or AP/AR payment
+	// whose amount reaches an approval band is rejected on the direct endpoint and
+	// must be routed through POST /v1/approvals. Default false. Set via
+	// FINANCE_REQUIRE_APPROVAL.
+	RequireApproval bool
 }
 
 // Load reads configuration from env. Hard cutover: no AUTH_MODE, no
@@ -151,6 +157,7 @@ func Load() (Config, error) {
 		EFRISBaseURL:        strings.TrimSpace(os.Getenv("URA_EFRIS_BASE_URL")),
 		EFRISAPIKey:         strings.TrimSpace(os.Getenv("URA_EFRIS_API_KEY")),
 		EFRISTIN:            strings.TrimSpace(os.Getenv("URA_EFRIS_TIN")),
+		RequireApproval:     getEnv("FINANCE_REQUIRE_APPROVAL", "false") == "true",
 		EFRISSimulate:       getEnv("URA_EFRIS_SIMULATE", "false") == "true",
 		EFRISS2SURL:         strings.TrimSpace(os.Getenv("URA_EFRIS_S2S_URL")),
 		EFRISS2SPath:        strings.TrimSpace(os.Getenv("URA_EFRIS_S2S_PATH")),

@@ -15,5 +15,8 @@ func PermissionDescriptors() []PermissionDescriptor {
 		{Name: "finance.change_operations", Description: "Append finance ops audit events and table rows"},
 		{Name: "finance.view_own_ap", Description: "View own accounts-payable lines (vendor portal)"},
 		{Name: "finance.view_own_payment", Description: "View own payment history (vendor portal)"},
+		{Name: "finance.approve_tier1", Description: "Approve high-value journals/payments at tier 1 (lowest band)"},
+		{Name: "finance.approve_tier2", Description: "Approve high-value journals/payments at tier 2 (mid band)"},
+		{Name: "finance.approve_tier3", Description: "Approve high-value journals/payments at tier 3 (highest band)"},
 	}
 }

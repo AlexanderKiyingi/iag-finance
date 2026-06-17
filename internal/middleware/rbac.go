@@ -37,6 +37,14 @@ func requireAnyPermission(perms ...string) gin.HandlerFunc {
 	}
 }
 
+// HasPerm reports whether the authenticated principal holds a permission, for
+// data-dependent checks such as tiered approval where the required permission is
+// only known after loading the record.
+func HasPerm(c *gin.Context, code string) bool {
+	p, ok := principalFromContext(c)
+	return ok && authz.HasAnyPermission(p, code)
+}
+
 // RequireLedgerRead allows GL read APIs (gateway: finance.view_ledger or legacy view_operations).
 func RequireLedgerRead() gin.HandlerFunc {
 	return requireAnyPermission("finance.view_ledger", "finance.view_operations")
