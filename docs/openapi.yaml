@@ -56,18 +56,73 @@ paths:
     get:
       summary: AR aging buckets
       tags: [Reports]
+  /v1/reports/ap-aging:
+    get:
+      summary: AP aging buckets
+      tags: [Reports]
   /v1/reports/profit-and-loss:
     get:
-      summary: Profit and loss
+      summary: Profit and loss (params from/to, posted-only, base currency)
       tags: [Reports]
   /v1/reports/balance-sheet:
     get:
-      summary: Balance sheet
+      summary: Balance sheet (param asOf; includes current-period earnings rollup)
       tags: [Reports]
+  /v1/reports/gl-account/{code}:
+    get:
+      summary: Per-account GL detail with running base balance (params from/to)
+      tags: [Reports]
+      parameters:
+        - name: code
+          in: path
+          required: true
+          schema: { type: string }
   /v1/finance/summary:
     get:
       summary: AR summary for BFF consumers
       tags: [Reports]
+  /v1/ledger/year-end/{year}/close:
+    post:
+      summary: Year-end close (rolls P&L into retained earnings, locks the year)
+      tags: [Ledger]
+      parameters:
+        - name: year
+          in: path
+          required: true
+          schema: { type: integer }
+  /v1/fixed-assets:
+    get:
+      summary: List capitalised fixed assets (cost, accumulated depreciation, NBV)
+      tags: [Fixed Assets]
+    post:
+      summary: Capitalise an asset (posts Dr 1500 / Cr expense unless recordOnly)
+      tags: [Fixed Assets]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [assetRef, cost, inServiceDate, usefulLifeMonths]
+              properties:
+                assetRef: { type: string, description: warehouse asset tag }
+                description: { type: string }
+                category: { type: string }
+                cost: { type: string, description: decimal string }
+                salvageValue: { type: string }
+                inServiceDate: { type: string, format: date }
+                usefulLifeMonths: { type: integer }
+                currency: { type: string }
+                recordOnly: { type: boolean, description: skip the capitalization GL reclass }
+                capitalizeFromAccount: { type: string, description: expense account to reclass from (default 5000) }
+  /v1/fixed-assets/depreciation/run:
+    post:
+      summary: Run straight-line depreciation for a period (posts Dr 5300 / Cr 1510)
+      tags: [Fixed Assets]
+      parameters:
+        - name: period
+          in: query
+          schema: { type: string, description: "YYYY-MM (default current month)" }
   /v1/invoices:
     get:
       summary: List invoices (legacy shape)
