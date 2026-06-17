@@ -12,10 +12,11 @@ import (
 // header (a UUID) and stores it in the request context, so writes are stamped
 // with it and entity-aware reads scope to it. Absent → the default entity.
 //
-// NOTE: this is a scoping mechanism, not yet a per-user authorization boundary —
-// any caller may select any entity. Restricting which entities a user may access
-// requires an auth-service claim (e.g. an `entities` list in the JWT); wire that
-// in here when available.
+// Authorization: selecting a NON-default entity requires finance.cross_entity
+// (superuser bypasses). This closes the "any caller can pick any entity" hole.
+// Per-entity (rather than all-or-nothing) authorization additionally needs an
+// auth-service claim listing a user's permitted entities — check it here when
+// the token carries one.
 func EntityContext() gin.HandlerFunc {
 	return func(c *gin.Context) {
 		raw := c.GetHeader("X-Entity-Id")
@@ -26,6 +27,12 @@ func EntityContext() gin.HandlerFunc {
 		id, err := uuid.Parse(raw)
 		if err != nil {
 			apierr.JSONStatus(c, 400, "X-Entity-Id must be a valid UUID")
+			c.Abort()
+			return
+		}
+		if id != repository.DefaultEntityID && !HasPerm(c, "finance.cross_entity") {
+			apierr.WriteWith(c, 403, apierr.CodeForbidden, "not permitted to access this entity",
+				gin.H{"required_permission": "finance.cross_entity"})
 			c.Abort()
 			return
 		}

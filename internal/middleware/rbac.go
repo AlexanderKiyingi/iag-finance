@@ -22,6 +22,14 @@ func principalFromContext(c *gin.Context) (authz.Principal, bool) {
 	}, true
 }
 
+// Require gates a route on any of the given finance permissions (superuser
+// bypasses). Granular capability gates pass their specific permission plus the
+// broad finance.change_ledger, so existing change_ledger grants keep working
+// during rollout — remove change_ledger from a role to enforce the narrow grant.
+func Require(perms ...string) gin.HandlerFunc {
+	return requireAnyPermission(perms...)
+}
+
 func requireAnyPermission(perms ...string) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		p, ok := principalFromContext(c)

@@ -8,13 +8,17 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/alvor-technologies/iag-platform-go/apierr"
+	"github.com/iag-finance/backend/internal/middleware"
 )
 
 // entityScope resolves the entity ids a report should cover from the request:
 // the current entity (X-Entity-Id header, else default), or it plus descendants
-// when ?consolidated=true.
+// when ?consolidated=true. Consolidation requires finance.view_consolidated;
+// without it the flag is ignored (single-entity scope) rather than exposing
+// cross-entity data.
 func (a *API) entityScope(c *gin.Context) ([]uuid.UUID, error) {
-	return a.Ledger.EntityScope(c.Request.Context(), c.Query("consolidated") == "true")
+	consolidated := c.Query("consolidated") == "true" && middleware.HasPerm(c, "finance.view_consolidated")
+	return a.Ledger.EntityScope(c.Request.Context(), consolidated)
 }
 
 // dateParam parses a 'YYYY-MM-DD' query param into a *time.Time (nil if absent

@@ -18,5 +18,27 @@ func PermissionDescriptors() []PermissionDescriptor {
 		{Name: "finance.approve_tier1", Description: "Approve high-value journals/payments at tier 1 (lowest band)"},
 		{Name: "finance.approve_tier2", Description: "Approve high-value journals/payments at tier 2 (mid band)"},
 		{Name: "finance.approve_tier3", Description: "Approve high-value journals/payments at tier 3 (highest band)"},
+
+		// Granular capability permissions (separation of duties). Each is also
+		// satisfied by finance.change_ledger today so existing grants keep working;
+		// remove change_ledger from a role to enforce only the narrow grant.
+		{Name: "finance.manage_coa", Description: "Create/modify chart-of-accounts structure"},
+		{Name: "finance.reverse_journal", Description: "Reverse a posted journal entry"},
+		{Name: "finance.close_period", Description: "Close/reopen fiscal periods and run year-end close"},
+		{Name: "finance.run_depreciation", Description: "Register fixed assets and run depreciation"},
+		{Name: "finance.manage_fx", Description: "Manage exchange rates and run FX revaluation"},
+		{Name: "finance.manage_tax", Description: "Manage VAT/GST tax codes"},
+		{Name: "finance.submit_efris", Description: "Submit invoices to URA EFRIS (tax authority filing)"},
+		{Name: "finance.manage_entities", Description: "Create/manage accounting entities"},
+		{Name: "finance.manage_budgets", Description: "Set budgets"},
+		{Name: "finance.manage_dimensions", Description: "Manage projects and cost centres"},
+		{Name: "finance.issue_invoice", Description: "Create and issue customer invoices and recurring schedules"},
+		{Name: "finance.collect_payment", Description: "Create and confirm payment intents (collect on AR)"},
+
+		// Scoped read / cross-entity permissions.
+		{Name: "finance.view_consolidated", Description: "View consolidated (cross-entity) financial reports"},
+		{Name: "finance.cross_entity", Description: "Operate on a non-default accounting entity (X-Entity-Id)"},
+		{Name: "finance.view_payroll", Description: "View payroll employee/leave mirror data"},
+		{Name: "finance.view_own_ar", Description: "View own accounts-receivable lines (customer portal)"},
 	}
 }
