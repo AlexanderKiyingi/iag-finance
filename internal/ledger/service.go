@@ -28,10 +28,12 @@ var (
 )
 
 type LineInput struct {
-	AccountCode string
-	Debit       decimal.Decimal
-	Credit      decimal.Decimal
-	Memo        string
+	AccountCode  string
+	Debit        decimal.Decimal
+	Credit       decimal.Decimal
+	Memo         string
+	CostCenterID *uuid.UUID
+	ProjectID    *uuid.UUID
 }
 
 type CreateEntryInput struct {
@@ -120,8 +122,8 @@ func (s *Service) LinkAPToJournal(ctx context.Context, documentRef string, journ
 	return s.repo.LinkAPOpenItemByDocumentRef(ctx, documentRef, journalEntryID, sourceEventID)
 }
 
-func (s *Service) TrialBalance(ctx context.Context, from, to *time.Time) ([]repository.TrialBalanceRow, error) {
-	return s.repo.TrialBalance(ctx, from, to)
+func (s *Service) TrialBalance(ctx context.Context, from, to *time.Time, entityIDs []uuid.UUID) ([]repository.TrialBalanceRow, error) {
+	return s.repo.TrialBalance(ctx, from, to, entityIDs)
 }
 
 func (s *Service) ARAging(ctx context.Context) ([]repository.ARAgingBucket, error) {
@@ -136,12 +138,61 @@ func (s *Service) GLAccountDetail(ctx context.Context, code string, from, to *ti
 	return s.repo.GLAccountDetail(ctx, code, from, to)
 }
 
-func (s *Service) ProfitAndLoss(ctx context.Context, from, to *time.Time) ([]repository.PLRow, error) {
-	return s.repo.ProfitAndLoss(ctx, from, to)
+func (s *Service) ProfitAndLoss(ctx context.Context, from, to *time.Time, entityIDs []uuid.UUID) ([]repository.PLRow, error) {
+	return s.repo.ProfitAndLoss(ctx, from, to, entityIDs)
 }
 
-func (s *Service) BalanceSheet(ctx context.Context, asOf *time.Time) ([]repository.BalanceSheetSection, error) {
-	return s.repo.BalanceSheet(ctx, asOf)
+func (s *Service) BalanceSheet(ctx context.Context, asOf *time.Time, entityIDs []uuid.UUID) ([]repository.BalanceSheetSection, error) {
+	return s.repo.BalanceSheet(ctx, asOf, entityIDs)
+}
+
+// EntityScope resolves which entity ids a report should cover: the current
+// entity, or it plus its descendants when consolidated.
+func (s *Service) EntityScope(ctx context.Context, consolidated bool) ([]uuid.UUID, error) {
+	return s.repo.EntityScope(ctx, repository.EntityFromContext(ctx), consolidated)
+}
+
+// UpsertBudget sets an account's budget for a period (entity from context).
+func (s *Service) UpsertBudget(ctx context.Context, period, accountCode, amount string) error {
+	return s.repo.UpsertBudget(ctx, period, accountCode, amount)
+}
+
+// BudgetVsActual compares budget to actual per account over a window.
+func (s *Service) BudgetVsActual(ctx context.Context, from, to *time.Time, entityIDs []uuid.UUID) ([]repository.BudgetLine, error) {
+	return s.repo.BudgetVsActual(ctx, from, to, entityIDs)
+}
+
+// CashFlow summarises cash movement by activity category over a window.
+func (s *Service) CashFlow(ctx context.Context, from, to *time.Time, entityIDs []uuid.UUID) ([]repository.CashFlowRow, error) {
+	return s.repo.CashFlow(ctx, from, to, entityIDs)
+}
+
+func (s *Service) CreateProject(ctx context.Context, code, name string) (*repository.Dimension, error) {
+	return s.repo.CreateProject(ctx, code, name)
+}
+func (s *Service) ListProjects(ctx context.Context) ([]repository.Dimension, error) {
+	return s.repo.ListProjects(ctx)
+}
+func (s *Service) CreateCostCenter(ctx context.Context, code, name string) (*repository.Dimension, error) {
+	return s.repo.CreateCostCenter(ctx, code, name)
+}
+func (s *Service) ListCostCenters(ctx context.Context) ([]repository.Dimension, error) {
+	return s.repo.ListCostCenters(ctx)
+}
+
+// ProjectPL is the revenue/expense detail for a project over a window.
+func (s *Service) ProjectPL(ctx context.Context, projectID uuid.UUID, from, to *time.Time) ([]repository.PLRow, error) {
+	return s.repo.ProjectPL(ctx, projectID, from, to)
+}
+
+// Entities lists configured accounting entities.
+func (s *Service) Entities(ctx context.Context) ([]repository.Entity, error) {
+	return s.repo.ListEntities(ctx)
+}
+
+// CreateEntity registers a new accounting entity.
+func (s *Service) CreateEntity(ctx context.Context, code, name, baseCurrency string, parentID *uuid.UUID) (*repository.Entity, error) {
+	return s.repo.CreateEntity(ctx, code, name, baseCurrency, parentID)
 }
 
 func (s *Service) FinanceSummary(ctx context.Context) (repository.FinanceSummary, error) {
@@ -351,11 +402,13 @@ func (s *Service) resolveLines(ctx context.Context, lines []LineInput) ([]reposi
 			return nil, fmt.Errorf("%w: %s", ErrAccountNotFound, l.AccountCode)
 		}
 		out = append(out, repository.ResolvedLine{
-			AccountID: acct.ID,
-			Debit:     l.Debit,
-			Credit:    l.Credit,
-			Memo:      l.Memo,
-			LineOrder: i,
+			AccountID:    acct.ID,
+			Debit:        l.Debit,
+			Credit:       l.Credit,
+			Memo:         l.Memo,
+			LineOrder:    i,
+			CostCenterID: l.CostCenterID,
+			ProjectID:    l.ProjectID,
 		})
 	}
 	return out, nil

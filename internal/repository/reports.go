@@ -4,6 +4,7 @@ import (
 	"context"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/shopspring/decimal"
 )
 
@@ -76,7 +77,7 @@ func (r *Repository) ARAging(ctx context.Context) ([]ARAgingBucket, error) {
 // entries are summed: the join is an INNER JOIN onto a posted, in-range entry,
 // so the date bounds actually filter the totals and still-draft lines never leak
 // into the statement.
-func (r *Repository) ProfitAndLoss(ctx context.Context, from, to *time.Time) ([]PLRow, error) {
+func (r *Repository) ProfitAndLoss(ctx context.Context, from, to *time.Time, entityIDs []uuid.UUID) ([]PLRow, error) {
 	rows, err := r.pool.Query(ctx, `
 		SELECT coa.code, coa.name,
 			CASE coa.account_type
@@ -88,11 +89,12 @@ func (r *Repository) ProfitAndLoss(ctx context.Context, from, to *time.Time) ([]
 		JOIN journal_entries je ON je.id = jl.journal_entry_id AND je.status = 'posted'
 			AND ($1::date IS NULL OR je.accounting_date >= $1)
 			AND ($2::date IS NULL OR je.accounting_date <= $2)
+			AND je.entity_id = ANY($3::uuid[])
 		WHERE coa.active = TRUE AND coa.account_type IN ('revenue', 'expense')
 		GROUP BY coa.id, coa.code, coa.name, coa.account_type
 		HAVING SUM(jl.debit_base) > 0 OR SUM(jl.credit_base) > 0
 		ORDER BY coa.account_type, coa.code
-	`, from, to)
+	`, from, to, entityIDs)
 	if err != nil {
 		return nil, err
 	}
@@ -113,7 +115,7 @@ func (r *Repository) ProfitAndLoss(ctx context.Context, from, to *time.Time) ([]
 // the balance sheet to balance before a year-end closing entry exists. It uses
 // the same INNER-JOIN-on-posted semantics as BalanceSheet so the two stay
 // consistent and Assets = Liabilities + Equity holds exactly.
-func (r *Repository) NetIncome(ctx context.Context, from, to *time.Time) (decimal.Decimal, error) {
+func (r *Repository) NetIncome(ctx context.Context, from, to *time.Time, entityIDs []uuid.UUID) (decimal.Decimal, error) {
 	var s string
 	err := r.pool.QueryRow(ctx, `
 		SELECT COALESCE(SUM(
@@ -127,8 +129,9 @@ func (r *Repository) NetIncome(ctx context.Context, from, to *time.Time) (decima
 		JOIN journal_entries je ON je.id = jl.journal_entry_id AND je.status = 'posted'
 			AND ($1::date IS NULL OR je.accounting_date >= $1)
 			AND ($2::date IS NULL OR je.accounting_date <= $2)
+			AND je.entity_id = ANY($3::uuid[])
 		WHERE coa.active = TRUE AND coa.account_type IN ('revenue', 'expense')
-	`, from, to).Scan(&s)
+	`, from, to, entityIDs).Scan(&s)
 	if err != nil {
 		return decimal.Zero, err
 	}
@@ -141,7 +144,7 @@ func (r *Repository) NetIncome(ctx context.Context, from, to *time.Time) (decima
 // retained earnings by a closing entry, so the statement balances even before
 // year-end close. After a close the P&L nets to zero and that line is zero (the
 // profit then lives in the Retained Earnings account). Only posted entries count.
-func (r *Repository) BalanceSheet(ctx context.Context, asOf *time.Time) ([]BalanceSheetSection, error) {
+func (r *Repository) BalanceSheet(ctx context.Context, asOf *time.Time, entityIDs []uuid.UUID) ([]BalanceSheetSection, error) {
 	rows, err := r.pool.Query(ctx, `
 		SELECT coa.account_type, coa.code, coa.name,
 			CASE coa.account_type
@@ -153,11 +156,12 @@ func (r *Repository) BalanceSheet(ctx context.Context, asOf *time.Time) ([]Balan
 		JOIN journal_lines jl ON jl.account_id = coa.id
 		JOIN journal_entries je ON je.id = jl.journal_entry_id AND je.status = 'posted'
 			AND ($1::date IS NULL OR je.accounting_date <= $1)
+			AND je.entity_id = ANY($2::uuid[])
 		WHERE coa.active = TRUE AND coa.account_type IN ('asset', 'liability', 'equity')
 		GROUP BY coa.id, coa.account_type, coa.code, coa.name
 		HAVING SUM(jl.debit_base) > 0 OR SUM(jl.credit_base) > 0
 		ORDER BY coa.account_type, coa.code
-	`, asOf)
+	`, asOf, entityIDs)
 	if err != nil {
 		return nil, err
 	}
@@ -174,7 +178,7 @@ func (r *Repository) BalanceSheet(ctx context.Context, asOf *time.Time) ([]Balan
 		return nil, err
 	}
 
-	ni, err := r.NetIncome(ctx, nil, asOf)
+	ni, err := r.NetIncome(ctx, nil, asOf, entityIDs)
 	if err != nil {
 		return nil, err
 	}

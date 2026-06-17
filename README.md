@@ -28,8 +28,16 @@ Via gateway: `http://localhost:8080/api/v1/finance/v1/...`
 | GET | `/v1/ledger/entries` | List journal entries |
 | POST | `/v1/ledger/entries` | Create draft entry |
 | POST | `/v1/ledger/entries/:id/post` | Post entry |
+| POST | `/v1/ledger/entries/:id/reverse` | Reverse a posted entry (mirror-image; original → `reversed`) |
 | POST | `/v1/ledger/validate-posting` | Posting rules check |
-| GET | `/v1/reports/trial-balance` | Trial balance (posted lines) |
+| GET | `/v1/ledger/periods` | List fiscal periods (open/closed) |
+| POST | `/v1/ledger/periods/:period/close` \| `/reopen` | Close / reopen `YYYY-MM` |
+| GET/POST | `/v1/fx/rates` | List / upsert exchange rates (base `BASE_CURRENCY`, default UGX) |
+| POST | `/v1/fx/revalue?period=YYYY-MM` | Period-end FX revaluation of open foreign AR/AP (realized FX books on settlement) |
+| GET | `/v1/reports/trial-balance` | Trial balance (posted, base currency; `?from=&to=`, `balanced` flag) |
+| GET | `/v1/reports/ap-aging` | AP aging buckets |
+| GET | `/v1/reports/gl-account/:code` | GL account detail (`?from=&to=`, running base balance) |
+| GET | `/v1/audit/events/verify` | Verify the audit hash-chain |
 | GET/POST | `/v1/ar/items` | AR open items |
 | POST | `/v1/ar/items/:id/payments` | Apply customer receipt (Cash/AR) |
 | GET/POST | `/v1/ap/items` | AP open items |
@@ -66,6 +74,23 @@ Via gateway: `http://localhost:8080/api/v1/finance/v1/...`
 
 **Permissions:** `finance.view_ledger` / `finance.change_ledger` (and legacy `finance.view_operations` on write/read).
 
+## Accounting features (QuickBooks/Zoho/Tally parity)
+
+| Area | Key endpoints |
+|------|---------------|
+| **Multi-currency FX** | `GET/POST /v1/fx/rates`, `POST /v1/fx/revalue?period=` (realized FX on settlement; unrealized revaluation) |
+| **VAT/GST** | `GET/POST /v1/tax-codes`, `GET /v1/reports/vat-return` (output − input VAT) |
+| **Multi-entity** | `GET/POST /v1/entities`; select with `X-Entity-Id` header; statements accept `?consolidated=true` |
+| **Budgeting** | `POST /v1/budgets`, `GET /v1/reports/budget-vs-actual` |
+| **Reports** | `GET /v1/reports/cash-flow`, `/profit-and-loss`, `/balance-sheet`, `/trial-balance`, `/gl-account/:code`, `/ap-aging` |
+| **Invoicing** | `GET/POST /v1/billing/invoices`, `POST /v1/billing/invoices/:id/issue` (→ AR + GL) |
+| **Recurring** | `GET/POST /v1/billing/recurring` (worker generates + issues on cadence) |
+| **Payments** | `POST /v1/payments/intents`, `POST /v1/payments/intents/:id/confirm` (provider-agnostic; Manual provider built in) |
+| **Job costing** | `GET/POST /v1/projects`, `/cost-centers`, `GET /v1/projects/:id/profit-and-loss` |
+
+All GL mutations chain into the audit hash-chain and are entity-aware. Amounts on
+documents are transaction-currency; reports aggregate in `BASE_CURRENCY` (default UGX).
+
 ## Event bus
 
 **Consumer** (`ENABLE_CONSUMER=true`):
@@ -75,20 +100,24 @@ Via gateway: `http://localhost:8080/api/v1/finance/v1/...`
 | `iag.finance` | `iag.finance.ledger` | `sale.completed`, `invoice.posted` |
 | `iag.fleet` | `iag.finance.fleet` | `fleet.fuel.recorded` |
 | `iag.supply-chain` | `iag.finance.supply-chain` | `scm.party.created`, `scm.party.updated` (AP `party_id` backfill) |
-| `iag.commercial` | `iag.finance.commercial` | `procurement.invoice.received` → AP inbox |
+| `iag.commercial` | `iag.finance.commercial` | `procurement.invoice.received`, `contracts.payment.authorized` → AP |
 | `iag.operations` | `iag.finance.erp` | `erp.employee.*`, `erp.leave.*` → payroll mirror ([`docs/PAYROLL_ERP_BOUNDARY.md`](docs/PAYROLL_ERP_BOUNDARY.md)) |
+| `iag.operations` | `iag.finance.warehouse` | `warehouse.asset.disposed` → retire fixed asset |
 
 **Payroll prep APIs** (mirror from ERP events, not source of truth):
 
 - `GET /v1/payroll/employees`
 - `GET /v1/payroll/leave-accruals`
 
-**Producer** (`ENABLE_EVENT_PUBLISH=true`, default on when Kafka is configured):
+**Producer** (`ENABLE_EVENT_PUBLISH=true`, default on when Kafka is configured) — all via a **transactional outbox** (event written in the same DB tx as the state change; relay worker delivers at-least-once):
 
 - `POST /v1/ar/items` → `sale.completed` on `iag.finance` (consumer books AR/revenue)
 - `POST /v1/ap/items` → `invoice.posted` on `iag.finance` (consumer books expense/AP)
+- AR/AP payments → `finance.payment.made` on `iag.finance`
+- EFRIS acknowledged → `finance.efris.submitted` on `iag.finance`
 
-External services may also publish the same event types to `iag.finance`.
+External services may also publish the same event types to `iag.finance`. See the
+full **[event contract](docs/EVENT_CONTRACT.md)** (payloads, idempotency keys, delivery guarantees).
 
 **Permissions:** registered at startup when `SERVICE_CLIENT_SECRET` is set. Mutating routes enforce `finance.change_*` / `finance.view_*` at the service (defense in depth with the gateway).
 
@@ -106,8 +135,15 @@ SCM party events backfill `party_id` on `ap_open_items` where `vendor_ref` match
 
 ## Docs
 
+**Integration:**
 - [Frontend integration (Next.js)](./docs/FRONTEND_INTEGRATION.md) — env template: [docs/frontend.env.example](./docs/frontend.env.example)
-- [Platform integration](./docs/PLATFORM_INTEGRATION.md)
+- [Event-bus contract](./docs/EVENT_CONTRACT.md) — consumed/produced events, outbox, idempotency
+- [REST integration contracts](./docs/INTEGRATION_CONTRACTS.md) — idempotency, error model, periods, reversal, audit
+- [Multi-currency (FX)](./docs/MULTICURRENCY.md) — base currency, rates API, base reporting
 - [Billing identity contract](./docs/BILLING_IDENTITY_CONTRACT.md)
+
+**Platform / reference:**
+- [Platform integration](./docs/PLATFORM_INTEGRATION.md)
+- [Payroll ↔ ERP boundary](./docs/PAYROLL_ERP_BOUNDARY.md)
 - [URA EFRIS](./docs/URA_EFRIS.md)
 - [OpenAPI](./docs/openapi.yaml)

@@ -82,6 +82,43 @@ func (r *Repository) ListRates(ctx context.Context, limit int) ([]ExchangeRate, 
 	return out, rows.Err()
 }
 
+// ForeignBalance is one open AR/AP item's remaining foreign-currency balance and
+// the rate it was booked at, for period-end revaluation.
+type ForeignBalance struct {
+	Direction string // ar|ap
+	Currency  string
+	Remaining decimal.Decimal
+	DocRate   decimal.Decimal
+}
+
+// OpenForeignBalances returns the remaining balances of all open/partial AR & AP
+// items denominated in a non-base currency.
+func (r *Repository) OpenForeignBalances(ctx context.Context) ([]ForeignBalance, error) {
+	rows, err := r.pool.Query(ctx, `
+		SELECT 'ar', currency, (amount - amount_paid)::text, fx_rate::text
+		FROM ar_open_items WHERE status IN ('open','partial') AND currency <> $1
+		UNION ALL
+		SELECT 'ap', currency, (amount - amount_paid)::text, fx_rate::text
+		FROM ap_open_items WHERE status IN ('open','partial') AND currency <> $1
+	`, r.baseCurrency)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []ForeignBalance
+	for rows.Next() {
+		var b ForeignBalance
+		var remStr, rateStr string
+		if err := rows.Scan(&b.Direction, &b.Currency, &remStr, &rateStr); err != nil {
+			return nil, err
+		}
+		b.Remaining, _ = decimal.NewFromString(remStr)
+		b.DocRate, _ = decimal.NewFromString(rateStr)
+		out = append(out, b)
+	}
+	return out, rows.Err()
+}
+
 // RateOrOne returns the currency→base rate, defaulting to 1 when none is
 // configured (so a missing rate degrades to 1:1 rather than blocking the write;
 // operators must configure rates for correct FX reporting).

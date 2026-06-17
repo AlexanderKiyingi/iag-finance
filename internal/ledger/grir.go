@@ -15,7 +15,7 @@ import (
 const (
 	grniExpenseAccount  = "5000" // expense / COGS (goods received)
 	grIRClearingAccount = "2150" // GR/IR clearing (liability)
-	vatControlAccount   = "2100" // VAT control
+	inputVATAccount     = "1300" // recoverable input VAT (purchases)
 	apControlAccount    = "2000" // accounts payable
 )
 
@@ -91,7 +91,7 @@ func (s *Service) BookAPInvoice(ctx context.Context, eventID, eventType, source,
 		lines = append(lines, LineInput{AccountCode: grniExpenseAccount, Debit: net, Memo: "Expense / COGS"})
 	}
 	if vat.IsPositive() {
-		lines = append(lines, LineInput{AccountCode: vatControlAccount, Debit: vat, Memo: "Input VAT"})
+		lines = append(lines, LineInput{AccountCode: inputVATAccount, Debit: vat, Memo: "Input VAT"})
 	}
 	lines = append(lines, LineInput{AccountCode: apControlAccount, Credit: gross, Memo: "AP liability"})
 

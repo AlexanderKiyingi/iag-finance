@@ -57,3 +57,65 @@ func (a *API) UpsertExchangeRate(c *gin.Context) {
 	}
 	c.JSON(http.StatusCreated, gin.H{"status": "saved"})
 }
+
+// RevalueFX posts a period-end unrealized FX revaluation (?period=YYYY-MM) of
+// open foreign AR/AP, with an auto-reversal dated the next period. Idempotent.
+func (a *API) RevalueFX(c *gin.Context) {
+	period := c.Query("period")
+	res, err := a.Ledger.RevalueFX(c.Request.Context(), period, chainActor(c))
+	if err != nil {
+		apierr.JSONStatus(c, http.StatusBadRequest, err.Error())
+		return
+	}
+	c.JSON(http.StatusOK, res)
+}
+
+// ListTaxCodes returns the configured VAT/GST codes.
+func (a *API) ListTaxCodes(c *gin.Context) {
+	codes, err := a.Ledger.ListTaxCodes(c.Request.Context())
+	if err != nil {
+		apierr.JSONStatus(c, http.StatusInternalServerError, "could not list tax codes")
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"taxCodes": codes})
+}
+
+type upsertTaxCodeRequest struct {
+	Code   string `json:"code" binding:"required"`
+	Name   string `json:"name" binding:"required"`
+	Rate   string `json:"rate" binding:"required"`
+	Active *bool  `json:"active"`
+}
+
+// UpsertTaxCode creates or updates a VAT/GST code (rate as a fraction, e.g. 0.18).
+func (a *API) UpsertTaxCode(c *gin.Context) {
+	var req upsertTaxCodeRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		apierr.JSONStatus(c, http.StatusBadRequest, err.Error())
+		return
+	}
+	rate, err := decimal.NewFromString(req.Rate)
+	if err != nil || rate.IsNegative() {
+		apierr.JSONStatus(c, http.StatusBadRequest, "rate must be a non-negative fraction (e.g. 0.18)")
+		return
+	}
+	active := true
+	if req.Active != nil {
+		active = *req.Active
+	}
+	if err := a.Ledger.UpsertTaxCode(c.Request.Context(), strings.ToUpper(req.Code), req.Name, rate.String(), active); err != nil {
+		apierr.JSONStatus(c, http.StatusInternalServerError, "could not save tax code")
+		return
+	}
+	c.JSON(http.StatusCreated, gin.H{"status": "saved"})
+}
+
+// VATReturn reports output − input VAT for a period (?from=&to=).
+func (a *API) VATReturn(c *gin.Context) {
+	res, err := a.Ledger.VATReturn(c.Request.Context(), dateParam(c, "from"), dateParam(c, "to"))
+	if err != nil {
+		apierr.JSONStatus(c, http.StatusInternalServerError, "could not build VAT return")
+		return
+	}
+	c.JSON(http.StatusOK, res)
+}

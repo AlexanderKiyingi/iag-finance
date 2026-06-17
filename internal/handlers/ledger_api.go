@@ -150,10 +150,12 @@ func (a *API) GetJournalEntry(c *gin.Context) {
 }
 
 type journalLineRequest struct {
-	AccountCode string `json:"accountCode" binding:"required"`
-	Debit       string `json:"debit"`
-	Credit      string `json:"credit"`
-	Memo        string `json:"memo"`
+	AccountCode  string `json:"accountCode" binding:"required"`
+	Debit        string `json:"debit"`
+	Credit       string `json:"credit"`
+	Memo         string `json:"memo"`
+	CostCenterID string `json:"costCenterId"`
+	ProjectID    string `json:"projectId"`
 }
 
 type createJournalRequest struct {
@@ -358,12 +360,27 @@ func parseLines(req []journalLineRequest) ([]ledger.LineInput, error) {
 			}
 			credit = cr
 		}
-		out = append(out, ledger.LineInput{
+		li := ledger.LineInput{
 			AccountCode: l.AccountCode,
 			Debit:       debit,
 			Credit:      credit,
 			Memo:        l.Memo,
-		})
+		}
+		if l.CostCenterID != "" {
+			id, err := uuid.Parse(l.CostCenterID)
+			if err != nil {
+				return nil, err
+			}
+			li.CostCenterID = &id
+		}
+		if l.ProjectID != "" {
+			id, err := uuid.Parse(l.ProjectID)
+			if err != nil {
+				return nil, err
+			}
+			li.ProjectID = &id
+		}
+		out = append(out, li)
 	}
 	return out, nil
 }
@@ -493,7 +510,12 @@ func invoicePostedOutbox(bus *events.Bus, documentRef, vendorRef, amount, curren
 }
 
 func (a *API) TrialBalance(c *gin.Context) {
-	rows, err := a.Ledger.TrialBalance(c.Request.Context(), dateParam(c, "from"), dateParam(c, "to"))
+	scope, err := a.entityScope(c)
+	if err != nil {
+		apierr.JSONStatus(c, http.StatusInternalServerError, "could not resolve entity scope")
+		return
+	}
+	rows, err := a.Ledger.TrialBalance(c.Request.Context(), dateParam(c, "from"), dateParam(c, "to"), scope)
 	if err != nil {
 		apierr.JSONStatus(c, http.StatusInternalServerError, "could not build trial balance")
 		return

@@ -42,6 +42,40 @@ type ResolvedLine struct {
 	Credit    decimal.Decimal
 	Memo      string
 	LineOrder int
+	// Currency overrides the entry currency for this line (""=entry currency).
+	// Used by multi-rate entries (e.g. realized FX, where a base-currency
+	// gain/loss line sits alongside foreign-currency legs).
+	Currency string
+	// DebitBase/CreditBase, when non-nil, set this line's base-currency amount
+	// explicitly instead of computing nominal × the entry rate. Lets one entry
+	// carry legs converted at different rates (the basis of FX gain/loss).
+	DebitBase  *decimal.Decimal
+	CreditBase *decimal.Decimal
+	// Optional job-costing dimensions (Phase 6).
+	CostCenterID *uuid.UUID
+	ProjectID    *uuid.UUID
+}
+
+// baseAmounts returns the line's (debitBase, creditBase): explicit overrides when
+// set, otherwise nominal × the supplied entry rate.
+func (l ResolvedLine) baseAmounts(rate decimal.Decimal) (decimal.Decimal, decimal.Decimal) {
+	db := l.Debit.Mul(rate).Round(2)
+	if l.DebitBase != nil {
+		db = l.DebitBase.Round(2)
+	}
+	cr := l.Credit.Mul(rate).Round(2)
+	if l.CreditBase != nil {
+		cr = l.CreditBase.Round(2)
+	}
+	return db, cr
+}
+
+// currencyOr returns the line currency or the entry default.
+func (l ResolvedLine) currencyOr(entryCurrency string) string {
+	if l.Currency != "" {
+		return l.Currency
+	}
+	return entryCurrency
 }
 
 type CreateJournalParams struct {
@@ -186,10 +220,10 @@ func (r *Repository) CreateJournalEntry(ctx context.Context, p CreateJournalPara
 	var entry domain.JournalEntry
 	err = tx.QueryRow(ctx, `
 		INSERT INTO journal_entries (
-			entry_number, description, status, source_event_id, source_service, correlation_id, created_by, accounting_date
-		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+			entry_number, description, status, source_event_id, source_service, correlation_id, created_by, accounting_date, entity_id
+		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
 		RETURNING id, entry_number, description, status, source_event_id, source_service, correlation_id, posted_at, created_by, created_at, updated_at
-	`, p.EntryNumber, p.Description, p.Status, p.SourceEventID, p.SourceService, p.CorrelationID, p.CreatedBy, resolveAccountingDate(p.AccountingDate, time.Now().UTC())).Scan(
+	`, p.EntryNumber, p.Description, p.Status, p.SourceEventID, p.SourceService, p.CorrelationID, p.CreatedBy, resolveAccountingDate(p.AccountingDate, time.Now().UTC()), EntityFromContext(ctx)).Scan(
 		&entry.ID, &entry.EntryNumber, &entry.Description, &entry.Status,
 		&entry.SourceEventID, &entry.SourceService, &entry.CorrelationID,
 		&entry.PostedAt, &entry.CreatedBy, &entry.CreatedAt, &entry.UpdatedAt,
@@ -198,15 +232,16 @@ func (r *Repository) CreateJournalEntry(ctx context.Context, p CreateJournalPara
 		return nil, err
 	}
 
-	currency := p.lineCurrency(r.baseCurrency)
+	entryCurrency := p.lineCurrency(r.baseCurrency)
 	rate := p.rate()
 	for _, line := range p.Lines {
 		var jl domain.JournalLine
+		debitBase, creditBase := line.baseAmounts(rate)
 		err = tx.QueryRow(ctx, `
-			INSERT INTO journal_lines (journal_entry_id, account_id, debit, credit, memo, line_order, currency, debit_base, credit_base)
-			VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+			INSERT INTO journal_lines (journal_entry_id, account_id, debit, credit, memo, line_order, currency, debit_base, credit_base, cost_center_id, project_id)
+			VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
 			RETURNING id, journal_entry_id, account_id, debit, credit, memo, line_order
-		`, entry.ID, line.AccountID, line.Debit, line.Credit, line.Memo, line.LineOrder, currency, line.Debit.Mul(rate).Round(2), line.Credit.Mul(rate).Round(2)).Scan(
+		`, entry.ID, line.AccountID, line.Debit, line.Credit, line.Memo, line.LineOrder, line.currencyOr(entryCurrency), debitBase, creditBase, line.CostCenterID, line.ProjectID).Scan(
 			&jl.ID, &jl.JournalEntryID, &jl.AccountID, &jl.Debit, &jl.Credit, &jl.Memo, &jl.LineOrder,
 		)
 		if err != nil {
@@ -506,10 +541,10 @@ func (r *Repository) CreateAROpenItem(ctx context.Context, customerRef, document
 	fxRate := r.RateOrOne(ctx, currency, time.Now().UTC())
 	var i domain.AROpenItem
 	if err := tx.QueryRow(ctx, `
-		INSERT INTO ar_open_items (customer_ref, document_ref, description, amount, currency, due_date, journal_entry_id, source_event_id, fx_rate)
-		VALUES ($1, $2, $3, $4::numeric, $5, $6, $7, $8, $9::numeric)
+		INSERT INTO ar_open_items (customer_ref, document_ref, description, amount, currency, due_date, journal_entry_id, source_event_id, fx_rate, entity_id)
+		VALUES ($1, $2, $3, $4::numeric, $5, $6, $7, $8, $9::numeric, $10)
 		RETURNING id, customer_ref, document_ref, description, amount::text, amount_paid::text, currency, due_date, status, journal_entry_id, source_event_id, created_at, updated_at
-	`, customerRef, documentRef, description, amount, currency, dueDate, journalEntryID, sourceEventID, fxRate.String()).Scan(
+	`, customerRef, documentRef, description, amount, currency, dueDate, journalEntryID, sourceEventID, fxRate.String(), EntityFromContext(ctx)).Scan(
 		&i.ID, &i.CustomerRef, &i.DocumentRef, &i.Description, &i.Amount, &i.AmountPaid,
 		&i.Currency, &i.DueDate, &i.Status, &i.JournalEntryID, &i.SourceEventID,
 		&i.CreatedAt, &i.UpdatedAt,
@@ -539,10 +574,10 @@ func (r *Repository) CreateAPOpenItem(ctx context.Context, vendorRef, documentRe
 	fxRate := r.RateOrOne(ctx, currency, time.Now().UTC())
 	var i domain.APOpenItem
 	if err := tx.QueryRow(ctx, `
-		INSERT INTO ap_open_items (vendor_ref, document_ref, description, amount, currency, due_date, journal_entry_id, source_event_id, fx_rate)
-		VALUES ($1, $2, $3, $4::numeric, $5, $6, $7, $8, $9::numeric)
+		INSERT INTO ap_open_items (vendor_ref, document_ref, description, amount, currency, due_date, journal_entry_id, source_event_id, fx_rate, entity_id)
+		VALUES ($1, $2, $3, $4::numeric, $5, $6, $7, $8, $9::numeric, $10)
 		RETURNING id, vendor_ref, document_ref, description, amount::text, amount_paid::text, currency, due_date, status, journal_entry_id, source_event_id, party_id, created_at, updated_at
-	`, vendorRef, documentRef, description, amount, currency, dueDate, journalEntryID, sourceEventID, fxRate.String()).Scan(
+	`, vendorRef, documentRef, description, amount, currency, dueDate, journalEntryID, sourceEventID, fxRate.String(), EntityFromContext(ctx)).Scan(
 		&i.ID, &i.VendorRef, &i.DocumentRef, &i.Description, &i.Amount, &i.AmountPaid,
 		&i.Currency, &i.DueDate, &i.Status, &i.JournalEntryID, &i.SourceEventID, &i.PartyID,
 		&i.CreatedAt, &i.UpdatedAt,
@@ -569,7 +604,7 @@ type TrialBalanceRow struct {
 
 // TrialBalance sums posted debits/credits per account, optionally bounded to a
 // [from, to] accounting-date range (nil = unbounded on that side).
-func (r *Repository) TrialBalance(ctx context.Context, from, to *time.Time) ([]TrialBalanceRow, error) {
+func (r *Repository) TrialBalance(ctx context.Context, from, to *time.Time, entityIDs []uuid.UUID) ([]TrialBalanceRow, error) {
 	// FILTER the SUMs to rows where the posted + in-range journal-entry join
 	// matched (je.id IS NOT NULL). This keeps every active account on the trial
 	// balance (zero-activity accounts show 0 / 0) while ensuring draft and
@@ -584,10 +619,11 @@ func (r *Repository) TrialBalance(ctx context.Context, from, to *time.Time) ([]T
 		LEFT JOIN journal_entries je ON je.id = jl.journal_entry_id AND je.status = 'posted'
 			AND ($1::date IS NULL OR je.accounting_date >= $1)
 			AND ($2::date IS NULL OR je.accounting_date <= $2)
+			AND je.entity_id = ANY($3::uuid[])
 		WHERE coa.active = TRUE
 		GROUP BY coa.id, coa.code, coa.name
 		ORDER BY coa.code
-	`, from, to)
+	`, from, to, entityIDs)
 	if err != nil {
 		return nil, err
 	}

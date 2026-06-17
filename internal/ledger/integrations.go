@@ -43,6 +43,21 @@ func (s *Service) UpsertExchangeRate(ctx context.Context, currency, rate string,
 	return s.repo.UpsertRate(ctx, currency, rate, asOf)
 }
 
+// ListTaxCodes returns the configured VAT/GST codes.
+func (s *Service) ListTaxCodes(ctx context.Context) ([]repository.TaxCode, error) {
+	return s.repo.ListTaxCodes(ctx)
+}
+
+// UpsertTaxCode creates or updates a VAT/GST code.
+func (s *Service) UpsertTaxCode(ctx context.Context, code, name, rate string, active bool) error {
+	return s.repo.UpsertTaxCode(ctx, code, name, rate, active)
+}
+
+// VATReturn aggregates output vs input VAT for a period.
+func (s *Service) VATReturn(ctx context.Context, from, to *time.Time) (repository.VATReturnReport, error) {
+	return s.repo.VATReturn(ctx, from, to)
+}
+
 func (s *Service) ImportBankStatement(ctx context.Context, bankAccountCode string, statementDate time.Time, lineCount int) (uuid.UUID, error) {
 	return s.repo.ImportBankStatement(ctx, bankAccountCode, statementDate, lineCount)
 }

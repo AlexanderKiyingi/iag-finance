@@ -5,8 +5,17 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/google/uuid"
+
 	"github.com/alvor-technologies/iag-platform-go/apierr"
 )
+
+// entityScope resolves the entity ids a report should cover from the request:
+// the current entity (X-Entity-Id header, else default), or it plus descendants
+// when ?consolidated=true.
+func (a *API) entityScope(c *gin.Context) ([]uuid.UUID, error) {
+	return a.Ledger.EntityScope(c.Request.Context(), c.Query("consolidated") == "true")
+}
 
 // dateParam parses a 'YYYY-MM-DD' query param into a *time.Time (nil if absent
 // or malformed — unbounded on that side).
@@ -57,7 +66,12 @@ func (a *API) GLAccountDetail(c *gin.Context) {
 }
 
 func (a *API) ProfitAndLoss(c *gin.Context) {
-	rows, err := a.Ledger.ProfitAndLoss(c.Request.Context(), dateParam(c, "from"), dateParam(c, "to"))
+	scope, err := a.entityScope(c)
+	if err != nil {
+		apierr.JSONStatus(c, http.StatusInternalServerError, "could not resolve entity scope")
+		return
+	}
+	rows, err := a.Ledger.ProfitAndLoss(c.Request.Context(), dateParam(c, "from"), dateParam(c, "to"), scope)
 	if err != nil {
 		apierr.JSONStatus(c, http.StatusInternalServerError, "could not build P&L")
 		return
@@ -71,9 +85,64 @@ func (a *API) BalanceSheet(c *gin.Context) {
 	if asOf == nil {
 		asOf = dateParam(c, "to")
 	}
-	rows, err := a.Ledger.BalanceSheet(c.Request.Context(), asOf)
+	scope, err := a.entityScope(c)
+	if err != nil {
+		apierr.JSONStatus(c, http.StatusInternalServerError, "could not resolve entity scope")
+		return
+	}
+	rows, err := a.Ledger.BalanceSheet(c.Request.Context(), asOf, scope)
 	if err != nil {
 		apierr.JSONStatus(c, http.StatusInternalServerError, "could not build balance sheet")
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"rows": rows})
+}
+
+type upsertBudgetRequest struct {
+	Period      string `json:"period" binding:"required"`      // YYYY-MM
+	AccountCode string `json:"accountCode" binding:"required"`
+	Amount      string `json:"amount" binding:"required"`
+}
+
+// UpsertBudget sets an account's budget for a period (entity from X-Entity-Id).
+func (a *API) UpsertBudget(c *gin.Context) {
+	var req upsertBudgetRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		apierr.JSONStatus(c, http.StatusBadRequest, err.Error())
+		return
+	}
+	if err := a.Ledger.UpsertBudget(c.Request.Context(), req.Period, req.AccountCode, req.Amount); err != nil {
+		apierr.JSONStatus(c, http.StatusInternalServerError, "could not save budget")
+		return
+	}
+	c.JSON(http.StatusCreated, gin.H{"status": "saved"})
+}
+
+// BudgetVsActual reports budget vs actual per account over ?from=&to=.
+func (a *API) BudgetVsActual(c *gin.Context) {
+	scope, err := a.entityScope(c)
+	if err != nil {
+		apierr.JSONStatus(c, http.StatusInternalServerError, "could not resolve entity scope")
+		return
+	}
+	rows, err := a.Ledger.BudgetVsActual(c.Request.Context(), dateParam(c, "from"), dateParam(c, "to"), scope)
+	if err != nil {
+		apierr.JSONStatus(c, http.StatusInternalServerError, "could not build budget vs actual")
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"rows": rows})
+}
+
+// CashFlow reports cash movement by activity category over ?from=&to=.
+func (a *API) CashFlow(c *gin.Context) {
+	scope, err := a.entityScope(c)
+	if err != nil {
+		apierr.JSONStatus(c, http.StatusInternalServerError, "could not resolve entity scope")
+		return
+	}
+	rows, err := a.Ledger.CashFlow(c.Request.Context(), dateParam(c, "from"), dateParam(c, "to"), scope)
+	if err != nil {
+		apierr.JSONStatus(c, http.StatusInternalServerError, "could not build cash flow")
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"rows": rows})

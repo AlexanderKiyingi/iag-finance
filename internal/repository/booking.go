@@ -62,22 +62,22 @@ func (r *Repository) insertPostedEntryTx(ctx context.Context, tx pgx.Tx, p Creat
 	var entryID uuid.UUID
 	err := tx.QueryRow(ctx, `
 		INSERT INTO journal_entries (
-			entry_number, description, status, source_event_id, source_service, correlation_id, created_by, posted_at, accounting_date
-		) VALUES ($1, $2, 'posted', $3, $4, $5, $6, $7, $8)
+			entry_number, description, status, source_event_id, source_service, correlation_id, created_by, posted_at, accounting_date, entity_id
+		) VALUES ($1, $2, 'posted', $3, $4, $5, $6, $7, $8, $9)
 		RETURNING id
-	`, p.EntryNumber, p.Description, p.SourceEventID, p.SourceService, p.CorrelationID, p.CreatedBy, postedAt, resolveAccountingDate(p.AccountingDate, postedAt)).Scan(&entryID)
+	`, p.EntryNumber, p.Description, p.SourceEventID, p.SourceService, p.CorrelationID, p.CreatedBy, postedAt, resolveAccountingDate(p.AccountingDate, postedAt), EntityFromContext(ctx)).Scan(&entryID)
 	if err != nil {
 		return uuid.Nil, err
 	}
-	currency := p.lineCurrency(r.baseCurrency)
+	entryCurrency := p.lineCurrency(r.baseCurrency)
 	rate := p.rate()
 	for _, line := range p.Lines {
-		debitBase := line.Debit.Mul(rate).Round(2)
-		creditBase := line.Credit.Mul(rate).Round(2)
+		debitBase, creditBase := line.baseAmounts(rate)
+		currency := line.currencyOr(entryCurrency)
 		if _, err := tx.Exec(ctx, `
-			INSERT INTO journal_lines (journal_entry_id, account_id, debit, credit, memo, line_order, currency, debit_base, credit_base)
-			VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
-		`, entryID, line.AccountID, line.Debit, line.Credit, line.Memo, line.LineOrder, currency, debitBase, creditBase); err != nil {
+			INSERT INTO journal_lines (journal_entry_id, account_id, debit, credit, memo, line_order, currency, debit_base, credit_base, cost_center_id, project_id)
+			VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+		`, entryID, line.AccountID, line.Debit, line.Credit, line.Memo, line.LineOrder, currency, debitBase, creditBase, line.CostCenterID, line.ProjectID); err != nil {
 			return uuid.Nil, err
 		}
 	}

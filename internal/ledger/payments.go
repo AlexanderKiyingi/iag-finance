@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/shopspring/decimal"
@@ -11,6 +12,100 @@ import (
 	"github.com/iag-finance/backend/internal/domain"
 	"github.com/iag-finance/backend/internal/repository"
 )
+
+func decPtr(d decimal.Decimal) *decimal.Decimal { return &d }
+
+// resolveAccount resolves a chart-of-accounts code or returns ErrAccountNotFound.
+func (s *Service) resolveAccount(ctx context.Context, code string) (*domain.ChartAccount, error) {
+	acct, err := s.repo.GetAccountByCode(ctx, code)
+	if err != nil {
+		return nil, err
+	}
+	if acct == nil {
+		return nil, fmt.Errorf("%w: %s", ErrAccountNotFound, code)
+	}
+	return acct, nil
+}
+
+// settlementLines builds the GL lines for settling a foreign open item with
+// realized FX gain/loss: the cash leg is valued at payRate (payment-date) and
+// the AR/AP clearing leg at docRate (the document's booked rate); the base
+// residual posts to Realized FX Gain (7200) or Loss (7210). For base currency or
+// an unchanged rate the residual is zero and no FX line is added (behaves exactly
+// as the historical method did before). All amounts balance in base currency,
+// which is what the balanced-entry trigger now asserts (migration 028).
+func (s *Service) settlementLines(ctx context.Context, direction string, amount decimal.Decimal, currency string, docRate, payRate decimal.Decimal) ([]repository.ResolvedLine, error) {
+	cashBase := amount.Mul(payRate).Round(2)
+	clearBase := amount.Mul(docRate).Round(2)
+
+	cash, err := s.resolveAccount(ctx, "1000")
+	if err != nil {
+		return nil, err
+	}
+	var lines []repository.ResolvedLine
+	var residual decimal.Decimal
+	if direction == "ar" {
+		ar, err := s.resolveAccount(ctx, "1100")
+		if err != nil {
+			return nil, err
+		}
+		lines = []repository.ResolvedLine{
+			{AccountID: cash.ID, Debit: amount, Currency: currency, DebitBase: decPtr(cashBase), Memo: "Cash receipt", LineOrder: 0},
+			{AccountID: ar.ID, Credit: amount, Currency: currency, CreditBase: decPtr(clearBase), Memo: "AR clearance", LineOrder: 1},
+		}
+		residual = cashBase.Sub(clearBase) // cash worth more than AR cleared → gain
+	} else {
+		ap, err := s.resolveAccount(ctx, "2000")
+		if err != nil {
+			return nil, err
+		}
+		lines = []repository.ResolvedLine{
+			{AccountID: ap.ID, Debit: amount, Currency: currency, DebitBase: decPtr(clearBase), Memo: "AP clearance", LineOrder: 0},
+			{AccountID: cash.ID, Credit: amount, Currency: currency, CreditBase: decPtr(cashBase), Memo: "Cash disbursement", LineOrder: 1},
+		}
+		residual = clearBase.Sub(cashBase) // liability cleared > cash paid → gain
+	}
+
+	if !residual.IsZero() {
+		base := s.repo.BaseCurrency()
+		if residual.IsPositive() {
+			gain, err := s.resolveAccount(ctx, "7200")
+			if err != nil {
+				return nil, err
+			}
+			lines = append(lines, repository.ResolvedLine{
+				AccountID: gain.ID, Credit: residual, Currency: base, CreditBase: decPtr(residual),
+				Memo: "Realized FX gain", LineOrder: 2,
+			})
+		} else {
+			loss, err := s.resolveAccount(ctx, "7210")
+			if err != nil {
+				return nil, err
+			}
+			amt := residual.Abs()
+			lines = append(lines, repository.ResolvedLine{
+				AccountID: loss.ID, Debit: amt, Currency: base, DebitBase: decPtr(amt),
+				Memo: "Realized FX loss", LineOrder: 2,
+			})
+		}
+	}
+	return lines, nil
+}
+
+// settlementRates returns (docRate, payRate) for a settlement: the document's
+// booked rate and the current (payment-date) rate. A missing current rate falls
+// back to the document rate (→ no FX gain/loss), never to 1.
+func (s *Service) settlementRates(ctx context.Context, direction string, itemID uuid.UUID, currency string) (decimal.Decimal, decimal.Decimal, error) {
+	docRate, err := s.repo.OpenItemFXRate(ctx, direction, itemID)
+	if err != nil {
+		return decimal.Zero, decimal.Zero, err
+	}
+	payRate, err := s.repo.GetRate(ctx, currency, time.Now().UTC())
+	if err != nil {
+		payRate = docRate
+	}
+	return docRate, payRate, nil
+}
 
 var (
 	ErrOpenItemNotFound = repository.ErrOpenItemNotFound
@@ -37,17 +132,14 @@ func (s *Service) ApplyARPayment(ctx context.Context, itemID uuid.UUID, amount d
 	} else if currency != item.Currency {
 		return nil, nil, ErrCurrencyMismatch
 	}
-	// Settle at the document's booking rate (historical method) so the AR base
-	// balance clears exactly and the books stay balanced in base currency.
-	fxRate, err := s.repo.OpenItemFXRate(ctx, "ar", itemID)
+	// Settle the AR-clearing leg at the document rate and the cash leg at the
+	// current rate; the base residual is realized FX gain/loss.
+	docRate, payRate, err := s.settlementRates(ctx, "ar", itemID, currency)
 	if err != nil {
 		return nil, nil, err
 	}
 	eventID := fmt.Sprintf("payment.ar:%s:%s", itemID.String(), paymentRef)
-	lines, err := s.resolveLines(ctx, []LineInput{
-		{AccountCode: "1000", Debit: amount, Memo: "Cash receipt"},
-		{AccountCode: "1100", Credit: amount, Memo: "AR clearance"},
-	})
+	lines, err := s.settlementLines(ctx, "ar", amount, currency, docRate, payRate)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -55,7 +147,7 @@ func (s *Service) ApplyARPayment(ctx context.Context, itemID uuid.UUID, amount d
 		EventID: eventID, EventType: "payment.received", Source: "iag.finance", CorrelationID: paymentRef,
 		Description: fmt.Sprintf("AR payment — %s", item.DocumentRef),
 		Direction: "ar", OpenItemID: itemID, Amount: amount, Currency: currency, PaymentRef: paymentRef,
-		FXRate: fxRate, Lines: lines, Outbox: outbox,
+		FXRate: docRate, Lines: lines, Outbox: outbox,
 	}, &repository.AuditInfo{
 		Actor:     actorOrSystem(actor),
 		EventType: "ar.payment",
@@ -84,15 +176,12 @@ func (s *Service) ApplyAPPayment(ctx context.Context, itemID uuid.UUID, amount d
 	} else if currency != item.Currency {
 		return nil, nil, ErrCurrencyMismatch
 	}
-	fxRate, err := s.repo.OpenItemFXRate(ctx, "ap", itemID)
+	docRate, payRate, err := s.settlementRates(ctx, "ap", itemID, currency)
 	if err != nil {
 		return nil, nil, err
 	}
 	eventID := fmt.Sprintf("payment.ap:%s:%s", itemID.String(), paymentRef)
-	lines, err := s.resolveLines(ctx, []LineInput{
-		{AccountCode: "2000", Debit: amount, Memo: "AP clearance"},
-		{AccountCode: "1000", Credit: amount, Memo: "Cash disbursement"},
-	})
+	lines, err := s.settlementLines(ctx, "ap", amount, currency, docRate, payRate)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -100,7 +189,7 @@ func (s *Service) ApplyAPPayment(ctx context.Context, itemID uuid.UUID, amount d
 		EventID: eventID, EventType: "payment.disbursed", Source: "iag.finance", CorrelationID: paymentRef,
 		Description: fmt.Sprintf("AP payment — %s", item.DocumentRef),
 		Direction: "ap", OpenItemID: itemID, Amount: amount, Currency: currency, PaymentRef: paymentRef,
-		FXRate: fxRate, Lines: lines, Outbox: outbox,
+		FXRate: docRate, Lines: lines, Outbox: outbox,
 	}, &repository.AuditInfo{
 		Actor:     actorOrSystem(actor),
 		EventType: "ap.payment",

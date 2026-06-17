@@ -151,6 +151,9 @@ func main() {
 		go worker.NewOutboxRelay(repo, eventBus, 5*time.Second).Run(ctx)
 	}
 
+	// Generate invoices from due recurring schedules.
+	go worker.NewRecurringInvoicer(repo, ledgerSvc, time.Hour).Run(ctx)
+
 	// Shared producer used for the DLQ. Re-used by both the iag.finance and
 	// iag.fleet consumers below so we don't carry two Kafka writer fleets.
 	var dlqProducer *platformevents.Producer

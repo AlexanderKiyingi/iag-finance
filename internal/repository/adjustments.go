@@ -273,10 +273,10 @@ func (r *Repository) CreateAROpenItemWithBilling(ctx context.Context, customerRe
 	fxRate := r.RateOrOne(ctx, currency, time.Now().UTC())
 	var i domain.AROpenItem
 	if err := tx.QueryRow(ctx, `
-		INSERT INTO ar_open_items (customer_ref, document_ref, description, amount, currency, due_date, billing_org_id, billing_identity_id, fx_rate)
-		VALUES ($1, $2, $3, $4::numeric, $5, $6, $7, $8, $9::numeric)
+		INSERT INTO ar_open_items (customer_ref, document_ref, description, amount, currency, due_date, billing_org_id, billing_identity_id, fx_rate, entity_id)
+		VALUES ($1, $2, $3, $4::numeric, $5, $6, $7, $8, $9::numeric, $10)
 		RETURNING id, customer_ref, document_ref, description, amount::text, amount_paid::text, currency, due_date, status, journal_entry_id, source_event_id, created_at, updated_at
-	`, customerRef, documentRef, description, amount, currency, dueDate, billingOrgID, billingIdentityID, fxRate.String()).Scan(
+	`, customerRef, documentRef, description, amount, currency, dueDate, billingOrgID, billingIdentityID, fxRate.String(), EntityFromContext(ctx)).Scan(
 		&i.ID, &i.CustomerRef, &i.DocumentRef, &i.Description, &i.Amount, &i.AmountPaid,
 		&i.Currency, &i.DueDate, &i.Status, &i.JournalEntryID, &i.SourceEventID,
 		&i.CreatedAt, &i.UpdatedAt,
