@@ -136,13 +136,50 @@ edit, deletion, or reorder of a past entry breaks the chain.
 
 ---
 
-## 7. Permissions quick reference
+## 7. Permissions
 
-| Capability | Permission(s) |
-|------------|---------------|
-| Read GL / reports / FX rates / fixed assets | `finance.view_ledger` (or legacy `finance.view_operations`) |
-| Post / pay / adjust / reverse / set FX rates / close periods / register assets / run depreciation | `finance.change_ledger` (or legacy `finance.change_operations`) |
+Enforced at the service (defence in depth with the gateway). Superuser bypasses
+all checks.
+
+**Baseline:**
+
+| Capability | Permission |
+|------------|------------|
+| Read GL / reports / masters | `finance.view_ledger` |
+| Routine journal create/post/pay/adjust | `finance.change_ledger` |
 | Vendor portal (own AP) | `finance.view_own_ap` / `finance.view_own_payment` |
 | Admin audit/monitoring | admin role |
 
-Permissions are enforced at the service (defence in depth with the gateway).
+**Granular capability permissions (separation of duties).** Each sensitive write
+is gated by a specific permission **OR** `finance.change_ledger` — so existing
+`change_ledger` grants keep working, and you enforce SoD by *removing*
+`change_ledger` from a role and granting only the narrow permissions:
+
+| Action | Permission |
+|--------|------------|
+| Modify chart of accounts | `finance.manage_coa` |
+| Reverse a posted entry | `finance.reverse_journal` |
+| Close/reopen periods, year-end | `finance.close_period` |
+| Fixed assets + depreciation | `finance.run_depreciation` |
+| Exchange rates + FX revaluation | `finance.manage_fx` |
+| Tax codes | `finance.manage_tax` |
+| Submit to URA EFRIS | `finance.submit_efris` |
+| Create entities | `finance.manage_entities` |
+| Set budgets | `finance.manage_budgets` |
+| Projects / cost centres | `finance.manage_dimensions` |
+| Create/issue invoices, recurring | `finance.issue_invoice` |
+| Payment intents (collect) | `finance.collect_payment` |
+| Approve at a tier | `finance.approve_tier1/2/3` (requester ≠ approver; distinct approver per tier) |
+
+**Scoped reads / multi-entity:**
+
+| Capability | Permission |
+|------------|------------|
+| Select a non-default entity (`X-Entity-Id`) | `finance.cross_entity` (else 403) |
+| Consolidated (`?consolidated=true`) reports | `finance.view_consolidated` (else the flag is ignored → single-entity scope) |
+| Payroll mirror data | `finance.view_payroll` |
+
+> Limitation: `finance.cross_entity` is all-or-nothing across non-default
+> entities. **Per-entity** authorization (which specific entities a user may
+> access) needs an auth-service token claim listing them — checked in
+> `EntityContext` once available.
