@@ -226,6 +226,18 @@ func main() {
 		}
 		consumers = append(consumers, c5)
 
+		// Senary: iag.operations — warehouse.asset.disposed → gain/loss on disposal.
+		c6, err := consumer.NewWarehouse(consumer.Config{
+			Brokers:  cfg.KafkaBrokers,
+			GroupID:  "iag.finance.warehouse",
+			Topic:    cfg.KafkaOperationsTopic,
+			DLQTopic: cfg.KafkaDLQTopic,
+		}, ledgerSvc, dlqProducer)
+		if err != nil {
+			log.Fatal("finance warehouse consumer: ", err)
+		}
+		consumers = append(consumers, c6)
+
 		for _, c := range consumers {
 			c := c
 			go func() {
