@@ -81,6 +81,12 @@ func NewRouter(deps RouterDeps) *gin.Engine {
 	router.GET("/health", ops.Health)
 	router.GET("/ready", ops.Ready)
 
+	// Realtime channel for the SPA. Registered outside the v1 group because a
+	// browser WebSocket cannot send an Authorization header — the client
+	// authenticates with an {type:"auth",token} frame instead (see WSHandler).
+	ws := &handlers.WSHandler{Verifier: deps.Verifier, Repo: api.Repo}
+	router.GET("/v1/ws/events", ws.Events)
+
 	principal := middleware.Principal(deps.Verifier)
 	ledgerRead := middleware.RequireLedgerRead()
 	ledgerWrite := middleware.RequireLedgerWrite()
