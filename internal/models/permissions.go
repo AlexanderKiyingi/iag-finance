@@ -40,5 +40,11 @@ func PermissionDescriptors() []PermissionDescriptor {
 		{Name: "finance.cross_entity", Description: "Operate on a non-default accounting entity (X-Entity-Id)"},
 		{Name: "finance.view_payroll", Description: "View payroll employee/leave mirror data"},
 		{Name: "finance.view_own_ar", Description: "View own accounts-receivable lines (customer portal)"},
+
+		// Farmer-payout domain (cherry intake / MoMo float). Defined in the auth
+		// catalogue and surfaced in the finance UI; declared here so the finance
+		// service's catalog stays the complete source of truth.
+		{Name: "finance.view_farmerpayment", Description: "View farmer payments"},
+		{Name: "finance.change_farmerpayment", Description: "Update farmer payments"},
 	}
 }

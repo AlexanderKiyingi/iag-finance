@@ -1,0 +1,483 @@
+{
+  "version": 1,
+  "catalog": [
+    {
+      "codename": "finance.view_ledger",
+      "description": "View chart of accounts, journal entries, and GL reports"
+    },
+    {
+      "codename": "finance.change_ledger",
+      "description": "Create and post journal entries and chart accounts"
+    },
+    {
+      "codename": "finance.view_operations",
+      "description": "View finance ops audit, inboxes, and prototype table rows"
+    },
+    {
+      "codename": "finance.change_operations",
+      "description": "Append finance ops audit events and table rows"
+    },
+    {
+      "codename": "finance.view_own_ap",
+      "description": "View own accounts-payable lines (vendor portal)"
+    },
+    {
+      "codename": "finance.view_own_payment",
+      "description": "View own payment history (vendor portal)"
+    },
+    {
+      "codename": "finance.approve_tier1",
+      "description": "Approve high-value journals/payments at tier 1 (lowest band)"
+    },
+    {
+      "codename": "finance.approve_tier2",
+      "description": "Approve high-value journals/payments at tier 2 (mid band)"
+    },
+    {
+      "codename": "finance.approve_tier3",
+      "description": "Approve high-value journals/payments at tier 3 (highest band)"
+    },
+    {
+      "codename": "finance.manage_coa",
+      "description": "Create/modify chart-of-accounts structure"
+    },
+    {
+      "codename": "finance.reverse_journal",
+      "description": "Reverse a posted journal entry"
+    },
+    {
+      "codename": "finance.close_period",
+      "description": "Close/reopen fiscal periods and run year-end close"
+    },
+    {
+      "codename": "finance.run_depreciation",
+      "description": "Register fixed assets and run depreciation"
+    },
+    {
+      "codename": "finance.manage_fx",
+      "description": "Manage exchange rates and run FX revaluation"
+    },
+    {
+      "codename": "finance.manage_tax",
+      "description": "Manage VAT/GST tax codes"
+    },
+    {
+      "codename": "finance.submit_efris",
+      "description": "Submit invoices to URA EFRIS (tax authority filing)"
+    },
+    {
+      "codename": "finance.manage_entities",
+      "description": "Create/manage accounting entities"
+    },
+    {
+      "codename": "finance.manage_budgets",
+      "description": "Set budgets"
+    },
+    {
+      "codename": "finance.manage_dimensions",
+      "description": "Manage projects and cost centres"
+    },
+    {
+      "codename": "finance.issue_invoice",
+      "description": "Create and issue customer invoices and recurring schedules"
+    },
+    {
+      "codename": "finance.collect_payment",
+      "description": "Create and confirm payment intents (collect on AR)"
+    },
+    {
+      "codename": "finance.view_consolidated",
+      "description": "View consolidated (cross-entity) financial reports"
+    },
+    {
+      "codename": "finance.cross_entity",
+      "description": "Operate on a non-default accounting entity (X-Entity-Id)"
+    },
+    {
+      "codename": "finance.view_payroll",
+      "description": "View payroll employee/leave mirror data"
+    },
+    {
+      "codename": "finance.view_own_ar",
+      "description": "View own accounts-receivable lines (customer portal)"
+    },
+    {
+      "codename": "finance.view_farmerpayment",
+      "description": "View farmer payments"
+    },
+    {
+      "codename": "finance.change_farmerpayment",
+      "description": "Update farmer payments"
+    }
+  ],
+  "routeGates": [
+    {
+      "method": "POST",
+      "path": "/integrations/ura-efris/submit",
+      "permissions": [
+        "finance.submit_efris",
+        "finance.change_ledger"
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/integrations/banking/statements",
+      "permissions": [
+        "finance.change_ledger",
+        "finance.change_operations"
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/integrations/banking/statements/:id/reconcile/auto",
+      "permissions": [
+        "finance.change_ledger",
+        "finance.change_operations"
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/integrations/banking/lines/:lineId/match",
+      "permissions": [
+        "finance.change_ledger",
+        "finance.change_operations"
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/integrations/banking/lines/:lineId/confirm",
+      "permissions": [
+        "finance.change_ledger",
+        "finance.change_operations"
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/integrations/banking/lines/:lineId/reject",
+      "permissions": [
+        "finance.change_ledger",
+        "finance.change_operations"
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/integrations/banking/sync",
+      "permissions": [
+        "finance.change_ledger",
+        "finance.change_operations"
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/chart-of-accounts",
+      "permissions": [
+        "finance.manage_coa",
+        "finance.change_ledger"
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/ledger/entries",
+      "permissions": [
+        "finance.change_ledger",
+        "finance.change_operations"
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/ledger/entries/:id/post",
+      "permissions": [
+        "finance.change_ledger",
+        "finance.change_operations"
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/ledger/entries/:id/reverse",
+      "permissions": [
+        "finance.reverse_journal",
+        "finance.change_ledger"
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/ledger/validate-posting",
+      "permissions": [
+        "finance.change_ledger",
+        "finance.change_operations"
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/ledger/periods/:period/close",
+      "permissions": [
+        "finance.close_period",
+        "finance.change_ledger"
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/ledger/periods/:period/reopen",
+      "permissions": [
+        "finance.close_period",
+        "finance.change_ledger"
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/ledger/year-end/:year/close",
+      "permissions": [
+        "finance.close_period",
+        "finance.change_ledger"
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/fixed-assets",
+      "permissions": [
+        "finance.run_depreciation",
+        "finance.change_ledger"
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/fixed-assets/depreciation/run",
+      "permissions": [
+        "finance.run_depreciation",
+        "finance.change_ledger"
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/approvals",
+      "permissions": [
+        "finance.change_ledger",
+        "finance.change_operations"
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/approvals/:id/approve",
+      "permissions": [
+        "finance.change_ledger",
+        "finance.change_operations"
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/approvals/:id/reject",
+      "permissions": [
+        "finance.change_ledger",
+        "finance.change_operations"
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/fx/rates",
+      "permissions": [
+        "finance.manage_fx",
+        "finance.change_ledger"
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/fx/revalue",
+      "permissions": [
+        "finance.manage_fx",
+        "finance.change_ledger"
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/tax-codes",
+      "permissions": [
+        "finance.manage_tax",
+        "finance.change_ledger"
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/entities",
+      "permissions": [
+        "finance.manage_entities",
+        "finance.change_ledger"
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/budgets",
+      "permissions": [
+        "finance.manage_budgets",
+        "finance.change_ledger"
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/projects",
+      "permissions": [
+        "finance.manage_dimensions",
+        "finance.change_ledger"
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/cost-centers",
+      "permissions": [
+        "finance.manage_dimensions",
+        "finance.change_ledger"
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/billing/invoices",
+      "permissions": [
+        "finance.issue_invoice",
+        "finance.change_ledger"
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/billing/invoices/:id/issue",
+      "permissions": [
+        "finance.issue_invoice",
+        "finance.change_ledger"
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/billing/recurring",
+      "permissions": [
+        "finance.issue_invoice",
+        "finance.change_ledger"
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/payments/intents",
+      "permissions": [
+        "finance.collect_payment",
+        "finance.change_ledger"
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/payments/intents/:id/confirm",
+      "permissions": [
+        "finance.collect_payment",
+        "finance.change_ledger"
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/invoices",
+      "permissions": [
+        "finance.change_ledger",
+        "finance.change_operations"
+      ]
+    },
+    {
+      "method": "PATCH",
+      "path": "/invoices/:no",
+      "permissions": [
+        "finance.change_ledger",
+        "finance.change_operations"
+      ]
+    },
+    {
+      "method": "DELETE",
+      "path": "/invoices/:no",
+      "permissions": [
+        "finance.change_ledger",
+        "finance.change_operations"
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/ar/items",
+      "permissions": [
+        "finance.change_ledger",
+        "finance.change_operations"
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/ar/items/:id/payments",
+      "permissions": [
+        "finance.change_ledger",
+        "finance.change_operations"
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/ar/credit-notes",
+      "permissions": [
+        "finance.change_ledger",
+        "finance.change_operations"
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/ar/debit-notes",
+      "permissions": [
+        "finance.change_ledger",
+        "finance.change_operations"
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/ap/credit-notes",
+      "permissions": [
+        "finance.change_ledger",
+        "finance.change_operations"
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/ap/debit-notes",
+      "permissions": [
+        "finance.change_ledger",
+        "finance.change_operations"
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/ap/items",
+      "permissions": [
+        "finance.change_ledger",
+        "finance.change_operations"
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/ap/items/:id/payments",
+      "permissions": [
+        "finance.change_ledger",
+        "finance.change_operations"
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/payroll/runs",
+      "permissions": [
+        "finance.change_ledger",
+        "finance.change_operations"
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/audit/events",
+      "permissions": [
+        "finance.change_operations",
+        "finance.change_ledger"
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/tables/:tableId/rows",
+      "permissions": [
+        "finance.change_operations",
+        "finance.change_ledger"
+      ]
+    }
+  ]
+}
