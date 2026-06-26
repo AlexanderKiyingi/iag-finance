@@ -77,6 +77,11 @@ func RouteGates() []RouteGate {
 		{"PATCH", "/invoices/:no", ledgerWrite()},
 		{"DELETE", "/invoices/:no", ledgerWrite()},
 
+		// Legacy AP bills (AP counterpart of /invoices)
+		{"POST", "/bills", ledgerWrite()},
+		{"PATCH", "/bills/:no", ledgerWrite()},
+		{"DELETE", "/bills/:no", ledgerWrite()},
+
 		// AR / AP
 		{"POST", "/ar/items", ledgerWrite()},
 		{"POST", "/ar/items/:id/payments", ledgerWrite()},
