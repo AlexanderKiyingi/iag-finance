@@ -3,6 +3,7 @@ package handlers
 import (
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -10,6 +11,26 @@ import (
 	"github.com/iag-finance/backend/internal/ledger"
 	"github.com/alvor-technologies/iag-platform-go/apierr"
 )
+
+// normalizeOpenItemStatus validates a manual AR/AP status override against the
+// canonical lifecycle set. Empty/nil → (nil, true) so the column is left
+// untouched (COALESCE no-op). An unrecognized value → (nil, false) so the
+// handler can 400. Manual status is decoupled from amount_paid by design.
+func normalizeOpenItemStatus(raw *string) (*string, bool) {
+	if raw == nil {
+		return nil, true
+	}
+	s := strings.ToLower(strings.TrimSpace(*raw))
+	if s == "" {
+		return nil, true
+	}
+	switch s {
+	case "open", "partial", "closed":
+		return &s, true
+	default:
+		return nil, false
+	}
+}
 
 type legacyInvoice struct {
 	No       string  `json:"no"`
@@ -137,7 +158,12 @@ func (a *API) PatchInvoiceLegacy(c *gin.Context) {
 		}
 		due = &t
 	}
-	item, err := a.Ledger.UpdateARByDocumentRef(c.Request.Context(), c.Param("no"), patch.Customer, nil, due)
+	status, ok := normalizeOpenItemStatus(patch.Status)
+	if !ok {
+		apierr.JSONStatus(c, http.StatusBadRequest, "status must be open, partial, or closed")
+		return
+	}
+	item, err := a.Ledger.UpdateARByDocumentRef(c.Request.Context(), c.Param("no"), patch.Customer, nil, due, status)
 	if ledger.IsInvoiceNotFound(err) || item == nil {
 		apierr.JSONStatus(c, http.StatusNotFound, "not found")
 		return

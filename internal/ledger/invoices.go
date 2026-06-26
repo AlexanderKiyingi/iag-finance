@@ -19,8 +19,8 @@ func (s *Service) ListARFiltered(ctx context.Context, status, q string, limit, o
 	return s.repo.ListAROpenItemsFiltered(ctx, status, q, limit, offset)
 }
 
-func (s *Service) UpdateARByDocumentRef(ctx context.Context, documentRef string, customerRef, description *string, dueDate *time.Time) (*domain.AROpenItem, error) {
-	item, err := s.repo.UpdateAROpenItem(ctx, documentRef, customerRef, description, dueDate)
+func (s *Service) UpdateARByDocumentRef(ctx context.Context, documentRef string, customerRef, description *string, dueDate *time.Time, status *string) (*domain.AROpenItem, error) {
+	item, err := s.repo.UpdateAROpenItem(ctx, documentRef, customerRef, description, dueDate, status)
 	if err != nil {
 		return nil, err
 	}
@@ -44,8 +44,8 @@ func (s *Service) ListAPFiltered(ctx context.Context, status, q string, limit, o
 	return s.repo.ListAPOpenItemsFiltered(ctx, status, q, limit, offset)
 }
 
-func (s *Service) UpdateAPByDocumentRef(ctx context.Context, documentRef string, vendorRef, description *string, dueDate *time.Time) (*domain.APOpenItem, error) {
-	item, err := s.repo.UpdateAPOpenItem(ctx, documentRef, vendorRef, description, dueDate)
+func (s *Service) UpdateAPByDocumentRef(ctx context.Context, documentRef string, vendorRef, description *string, dueDate *time.Time, status *string) (*domain.APOpenItem, error) {
+	item, err := s.repo.UpdateAPOpenItem(ctx, documentRef, vendorRef, description, dueDate, status)
 	if err != nil {
 		return nil, err
 	}

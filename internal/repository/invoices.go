@@ -89,15 +89,16 @@ func (r *Repository) ListAPOpenItemsFiltered(ctx context.Context, status, q stri
 
 // UpdateAPOpenItem mirrors UpdateAROpenItem: amends a non-closed AP bill's
 // vendor/description/due date.
-func (r *Repository) UpdateAPOpenItem(ctx context.Context, documentRef string, vendorRef, description *string, dueDate *time.Time) (*domain.APOpenItem, error) {
+func (r *Repository) UpdateAPOpenItem(ctx context.Context, documentRef string, vendorRef, description *string, dueDate *time.Time, status *string) (*domain.APOpenItem, error) {
 	tag, err := r.pool.Exec(ctx, `
 		UPDATE ap_open_items SET
 			vendor_ref = COALESCE($2, vendor_ref),
 			description = COALESCE($3, description),
 			due_date = COALESCE($4, due_date),
+			status = COALESCE($5, status),
 			updated_at = NOW()
 		WHERE document_ref = $1 AND status != 'closed'
-	`, documentRef, vendorRef, description, dueDate)
+	`, documentRef, vendorRef, description, dueDate, status)
 	if err != nil {
 		return nil, err
 	}
@@ -156,15 +157,16 @@ func (r *Repository) ListAROpenItemsFiltered(ctx context.Context, status, q stri
 	return scanARItems(rows)
 }
 
-func (r *Repository) UpdateAROpenItem(ctx context.Context, documentRef string, customerRef, description *string, dueDate *time.Time) (*domain.AROpenItem, error) {
+func (r *Repository) UpdateAROpenItem(ctx context.Context, documentRef string, customerRef, description *string, dueDate *time.Time, status *string) (*domain.AROpenItem, error) {
 	tag, err := r.pool.Exec(ctx, `
 		UPDATE ar_open_items SET
 			customer_ref = COALESCE($2, customer_ref),
 			description = COALESCE($3, description),
 			due_date = COALESCE($4, due_date),
+			status = COALESCE($5, status),
 			updated_at = NOW()
 		WHERE document_ref = $1 AND status != 'closed'
-	`, documentRef, customerRef, description, dueDate)
+	`, documentRef, customerRef, description, dueDate, status)
 	if err != nil {
 		return nil, err
 	}

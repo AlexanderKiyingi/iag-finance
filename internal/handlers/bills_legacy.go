@@ -141,7 +141,12 @@ func (a *API) PatchBillLegacy(c *gin.Context) {
 		}
 		due = &t
 	}
-	item, err := a.Ledger.UpdateAPByDocumentRef(c.Request.Context(), c.Param("no"), patch.Vendor, nil, due)
+	status, ok := normalizeOpenItemStatus(patch.Status)
+	if !ok {
+		apierr.JSONStatus(c, http.StatusBadRequest, "status must be open, partial, or closed")
+		return
+	}
+	item, err := a.Ledger.UpdateAPByDocumentRef(c.Request.Context(), c.Param("no"), patch.Vendor, nil, due, status)
 	if ledger.IsInvoiceNotFound(err) || item == nil {
 		apierr.JSONStatus(c, http.StatusNotFound, "not found")
 		return
