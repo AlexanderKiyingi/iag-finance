@@ -34,6 +34,31 @@ func (s *Service) DeleteARByDocumentRef(ctx context.Context, documentRef string)
 	return s.repo.DeleteAROpenItem(ctx, documentRef)
 }
 
+// --- AP (bills) legacy CRUD — mirrors the AR helpers above ------------------
+
+func (s *Service) GetAPByDocumentRef(ctx context.Context, documentRef string) (*domain.APOpenItem, error) {
+	return s.repo.GetAPByDocumentRef(ctx, documentRef)
+}
+
+func (s *Service) ListAPFiltered(ctx context.Context, status, q string, limit, offset int) ([]domain.APOpenItem, error) {
+	return s.repo.ListAPOpenItemsFiltered(ctx, status, q, limit, offset)
+}
+
+func (s *Service) UpdateAPByDocumentRef(ctx context.Context, documentRef string, vendorRef, description *string, dueDate *time.Time) (*domain.APOpenItem, error) {
+	item, err := s.repo.UpdateAPOpenItem(ctx, documentRef, vendorRef, description, dueDate)
+	if err != nil {
+		return nil, err
+	}
+	if item == nil {
+		return nil, ErrInvoiceNotFound
+	}
+	return item, nil
+}
+
+func (s *Service) DeleteAPByDocumentRef(ctx context.Context, documentRef string) error {
+	return s.repo.DeleteAPOpenItem(ctx, documentRef)
+}
+
 func (s *Service) SalesFunnel(ctx context.Context) (repository.SalesFunnel, error) {
 	return s.repo.SalesFunnel(ctx)
 }
@@ -107,6 +132,37 @@ func InvoiceBalance(item domain.AROpenItem) (float64, error) {
 }
 
 func InvoiceTotal(item domain.AROpenItem) (float64, error) {
+	a, err := ParsePaymentAmount(item.Amount)
+	if err != nil {
+		return 0, err
+	}
+	f, _ := a.Float64()
+	return f, nil
+}
+
+// MapBillStatus mirrors MapInvoiceStatus for AP open items.
+func MapBillStatus(item domain.APOpenItem) string {
+	if item.Status == "closed" {
+		return "Paid"
+	}
+	if item.DueDate != nil && item.DueDate.Before(time.Now().UTC()) && item.Status != "closed" {
+		return "Overdue"
+	}
+	switch item.Status {
+	case "partial":
+		return "Partial"
+	case "open":
+		return "Open"
+	default:
+		return item.Status
+	}
+}
+
+func BillBalance(item domain.APOpenItem) (float64, error) {
+	return ParseBalance(item.Amount, item.AmountPaid)
+}
+
+func BillTotal(item domain.APOpenItem) (float64, error) {
 	a, err := ParsePaymentAmount(item.Amount)
 	if err != nil {
 		return 0, err

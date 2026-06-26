@@ -169,6 +169,12 @@ func NewRouter(deps RouterDeps) *gin.Engine {
 		v1.GET("/invoices/:no", ledgerRead, api.GetInvoiceLegacy)
 		w.PATCH("/invoices/:no", api.PatchInvoiceLegacy)
 		w.DELETE("/invoices/:no", api.DeleteInvoiceLegacy)
+		// Legacy AP "bills" CRUD — the AP counterpart of /invoices (→ ap_open_items)
+		v1.GET("/bills", ledgerRead, api.ListBillsLegacy)
+		w.POST("/bills", api.CreateBillLegacy)
+		v1.GET("/bills/:no", ledgerRead, api.GetBillLegacy)
+		w.PATCH("/bills/:no", api.PatchBillLegacy)
+		w.DELETE("/bills/:no", api.DeleteBillLegacy)
 		v1.GET("/banking/accounts", ledgerRead, api.ListBankingAccounts)
 		v1.GET("/banking/transactions", ledgerRead, api.ListBankingTransactions)
 

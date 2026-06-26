@@ -17,6 +17,7 @@ type ARAgingBucket struct {
 type PLRow struct {
 	AccountCode string `json:"accountCode"`
 	AccountName string `json:"accountName"`
+	AccountType string `json:"accountType"` // "revenue" | "expense"
 	Amount      string `json:"amount"`
 }
 
@@ -79,7 +80,7 @@ func (r *Repository) ARAging(ctx context.Context) ([]ARAgingBucket, error) {
 // into the statement.
 func (r *Repository) ProfitAndLoss(ctx context.Context, from, to *time.Time, entityIDs []uuid.UUID) ([]PLRow, error) {
 	rows, err := r.pool.Query(ctx, `
-		SELECT coa.code, coa.name,
+		SELECT coa.code, coa.name, coa.account_type,
 			CASE coa.account_type
 				WHEN 'revenue' THEN (SUM(jl.credit_base) - SUM(jl.debit_base))::text
 				WHEN 'expense' THEN (SUM(jl.debit_base) - SUM(jl.credit_base))::text
@@ -102,7 +103,7 @@ func (r *Repository) ProfitAndLoss(ctx context.Context, from, to *time.Time, ent
 	var out []PLRow
 	for rows.Next() {
 		var row PLRow
-		if err := rows.Scan(&row.AccountCode, &row.AccountName, &row.Amount); err != nil {
+		if err := rows.Scan(&row.AccountCode, &row.AccountName, &row.AccountType, &row.Amount); err != nil {
 			return nil, err
 		}
 		out = append(out, row)

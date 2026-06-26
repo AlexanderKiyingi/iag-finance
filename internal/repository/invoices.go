@@ -51,6 +51,77 @@ func (r *Repository) GetARByDocumentRef(ctx context.Context, documentRef string)
 	return &i, nil
 }
 
+// ListAPOpenItemsFiltered mirrors ListAROpenItemsFiltered for AP bills, filtering
+// by status and a document/vendor search term.
+func (r *Repository) ListAPOpenItemsFiltered(ctx context.Context, status, q string, limit, offset int) ([]domain.APOpenItem, error) {
+	if limit <= 0 || limit > 100 {
+		limit = 50
+	}
+	query := `
+		SELECT id, vendor_ref, document_ref, description, amount::text, amount_paid::text, currency, due_date, status, journal_entry_id, source_event_id, party_id, created_at, updated_at
+		FROM ap_open_items WHERE 1=1`
+	args := []any{}
+	n := 1
+	switch status {
+	case "Overdue":
+		query += ` AND status IN ('open', 'partial') AND due_date < CURRENT_DATE`
+	case "Open":
+		query += ` AND status = 'open'`
+	case "Partial":
+		query += ` AND status = 'partial'`
+	case "Paid", "Closed":
+		query += ` AND status = 'closed'`
+	}
+	if q != "" {
+		query += fmt.Sprintf(` AND (document_ref ILIKE $%d OR vendor_ref ILIKE $%d)`, n, n)
+		args = append(args, "%"+q+"%")
+		n++
+	}
+	query += fmt.Sprintf(` ORDER BY created_at DESC LIMIT $%d OFFSET $%d`, n, n+1)
+	args = append(args, limit, offset)
+	rows, err := r.pool.Query(ctx, query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	return scanAPItems(rows)
+}
+
+// UpdateAPOpenItem mirrors UpdateAROpenItem: amends a non-closed AP bill's
+// vendor/description/due date.
+func (r *Repository) UpdateAPOpenItem(ctx context.Context, documentRef string, vendorRef, description *string, dueDate *time.Time) (*domain.APOpenItem, error) {
+	tag, err := r.pool.Exec(ctx, `
+		UPDATE ap_open_items SET
+			vendor_ref = COALESCE($2, vendor_ref),
+			description = COALESCE($3, description),
+			due_date = COALESCE($4, due_date),
+			updated_at = NOW()
+		WHERE document_ref = $1 AND status != 'closed'
+	`, documentRef, vendorRef, description, dueDate)
+	if err != nil {
+		return nil, err
+	}
+	if tag.RowsAffected() == 0 {
+		return nil, ErrInvoiceNotFound
+	}
+	return r.GetAPByDocumentRef(ctx, documentRef)
+}
+
+// DeleteAPOpenItem mirrors DeleteAROpenItem: only an unpaid, open bill can be deleted.
+func (r *Repository) DeleteAPOpenItem(ctx context.Context, documentRef string) error {
+	tag, err := r.pool.Exec(ctx, `
+		DELETE FROM ap_open_items
+		WHERE document_ref = $1 AND status = 'open' AND amount_paid = 0
+	`, documentRef)
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() == 0 {
+		return ErrInvoiceNotFound
+	}
+	return nil
+}
+
 func (r *Repository) ListAROpenItemsFiltered(ctx context.Context, status, q string, limit, offset int) ([]domain.AROpenItem, error) {
 	if limit <= 0 || limit > 100 {
 		limit = 50
