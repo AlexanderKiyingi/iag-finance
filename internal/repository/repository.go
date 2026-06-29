@@ -327,7 +327,25 @@ func (r *Repository) ListJournalEntries(ctx context.Context, limit, offset int) 
 		}
 		items = append(items, e)
 	}
-	return items, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	rows.Close()
+
+	// Attach lines so clients can render amounts and the debit/credit accounts
+	// without an N+1 fetch per entry.
+	ids := make([]uuid.UUID, len(items))
+	for i := range items {
+		ids[i] = items[i].ID
+	}
+	byEntry, err := r.loadJournalLinesForEntries(ctx, ids)
+	if err != nil {
+		return nil, err
+	}
+	for i := range items {
+		items[i].Lines = byEntry[items[i].ID]
+	}
+	return items, nil
 }
 
 func (r *Repository) GetJournalEntry(ctx context.Context, id uuid.UUID) (*domain.JournalEntry, error) {
@@ -403,6 +421,35 @@ func (r *Repository) loadJournalLines(ctx context.Context, entryID uuid.UUID) ([
 		lines = append(lines, l)
 	}
 	return lines, rows.Err()
+}
+
+// loadJournalLinesForEntries batch-loads lines for many entries in one query,
+// grouped by entry id (avoids N+1 when listing). Returns an empty map for no ids.
+func (r *Repository) loadJournalLinesForEntries(ctx context.Context, ids []uuid.UUID) (map[uuid.UUID][]domain.JournalLine, error) {
+	byEntry := make(map[uuid.UUID][]domain.JournalLine, len(ids))
+	if len(ids) == 0 {
+		return byEntry, nil
+	}
+	rows, err := r.pool.Query(ctx, `
+		SELECT jl.id, jl.journal_entry_id, jl.account_id, coa.code, coa.name, jl.debit, jl.credit, jl.memo, jl.line_order
+		FROM journal_lines jl
+		JOIN chart_of_accounts coa ON coa.id = jl.account_id
+		WHERE jl.journal_entry_id = ANY($1)
+		ORDER BY jl.journal_entry_id, jl.line_order
+	`, ids)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var l domain.JournalLine
+		if err := rows.Scan(&l.ID, &l.JournalEntryID, &l.AccountID, &l.AccountCode, &l.AccountName, &l.Debit, &l.Credit, &l.Memo, &l.LineOrder); err != nil {
+			return nil, err
+		}
+		byEntry[l.JournalEntryID] = append(byEntry[l.JournalEntryID], l)
+	}
+	return byEntry, rows.Err()
 }
 
 func (r *Repository) UpdateJournalStatus(ctx context.Context, id uuid.UUID, status string, postedAt time.Time) (*domain.JournalEntry, error) {
