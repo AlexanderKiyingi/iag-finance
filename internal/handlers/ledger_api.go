@@ -118,6 +118,86 @@ func (a *API) CreateChartAccount(c *gin.Context) {
 	})
 }
 
+var validAccountTypes = map[string]bool{
+	"asset": true, "liability": true, "equity": true, "revenue": true, "expense": true,
+}
+
+type updateAccountRequest struct {
+	Name        *string `json:"name"`
+	AccountType *string `json:"accountType"`
+	Currency    *string `json:"currency"`
+	ParentID    *string `json:"parentId"`
+	Active      *bool   `json:"active"`
+}
+
+func (a *API) UpdateChartAccount(c *gin.Context) {
+	id, err := uuid.Parse(c.Param("id"))
+	if err != nil {
+		apierr.JSONStatus(c, http.StatusBadRequest, "invalid account id")
+		return
+	}
+	var req updateAccountRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		apierr.JSONStatus(c, http.StatusBadRequest, err.Error())
+		return
+	}
+	if req.AccountType != nil && !validAccountTypes[*req.AccountType] {
+		apierr.JSONStatus(c, http.StatusBadRequest, "accountType must be one of asset, liability, equity, revenue, expense")
+		return
+	}
+	// Code is immutable; map an empty name to "no change" so a blank field in a
+	// generic edit form doesn't wipe the account name.
+	if req.Name != nil && *req.Name == "" {
+		req.Name = nil
+	}
+	var parentID *uuid.UUID
+	if req.ParentID != nil && *req.ParentID != "" {
+		pid, err := uuid.Parse(*req.ParentID)
+		if err != nil {
+			apierr.JSONStatus(c, http.StatusBadRequest, "invalid parentId")
+			return
+		}
+		if pid == id {
+			apierr.JSONStatus(c, http.StatusBadRequest, "an account cannot be its own parent")
+			return
+		}
+		parentID = &pid
+	}
+
+	acct, err := a.Ledger.UpdateChartAccount(c.Request.Context(), id, req.Name, req.AccountType, req.Currency, parentID, req.Active)
+	if err != nil {
+		apierr.JSONStatus(c, http.StatusConflict, "could not update account")
+		return
+	}
+	if acct == nil {
+		apierr.JSONStatus(c, http.StatusNotFound, "account not found")
+		return
+	}
+	c.JSON(http.StatusOK, acct)
+	logBusinessEvent(c, a.Audit, auditlog.EventChartAccountUpdated, "chart_of_account", acct.ID.String(), http.StatusOK, map[string]any{
+		"code": acct.Code, "name": acct.Name, "accountType": acct.AccountType, "active": acct.Active,
+	})
+}
+
+func (a *API) DeleteChartAccount(c *gin.Context) {
+	id, err := uuid.Parse(c.Param("id"))
+	if err != nil {
+		apierr.JSONStatus(c, http.StatusBadRequest, "invalid account id")
+		return
+	}
+	deactivated, err := a.Ledger.DeactivateChartAccount(c.Request.Context(), id)
+	if err != nil {
+		apierr.JSONStatus(c, http.StatusInternalServerError, "could not deactivate account")
+		return
+	}
+	if !deactivated {
+		apierr.JSONStatus(c, http.StatusNotFound, "account not found")
+		return
+	}
+	c.Status(http.StatusNoContent)
+	logBusinessEvent(c, a.Audit, auditlog.EventChartAccountDeactivated, "chart_of_account", id.String(), http.StatusNoContent, nil)
+}
+
 func (a *API) ListJournalEntries(c *gin.Context) {
 	limit, offset := pagination(c)
 	items, err := a.Ledger.ListJournalEntries(c.Request.Context(), limit, offset)

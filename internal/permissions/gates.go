@@ -21,8 +21,8 @@ type RouteGate struct {
 
 // ledgerWrite / opsWrite return fresh slices matching the named middleware
 // helpers; granular returns a specific permission plus the change_ledger fallback.
-func ledgerWrite() []string   { return []string{changeLedger, changeOperations} }
-func opsWrite() []string      { return []string{changeOperations, changeLedger} }
+func ledgerWrite() []string      { return []string{changeLedger, changeOperations} }
+func opsWrite() []string         { return []string{changeOperations, changeLedger} }
 func granular(p string) []string { return []string{p, changeLedger} }
 
 // RouteGates is the authoritative gate map for every mutating finance route.
@@ -41,6 +41,8 @@ func RouteGates() []RouteGate {
 
 		// General ledger
 		{"POST", "/chart-of-accounts", granular("finance.manage_coa")},
+		{"PATCH", "/chart-of-accounts/:id", granular("finance.manage_coa")},
+		{"DELETE", "/chart-of-accounts/:id", granular("finance.manage_coa")},
 		{"POST", "/ledger/entries", ledgerWrite()},
 		{"POST", "/ledger/entries/:id/post", ledgerWrite()},
 		{"POST", "/ledger/entries/:id/reverse", granular("finance.reverse_journal")},

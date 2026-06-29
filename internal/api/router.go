@@ -114,6 +114,8 @@ func NewRouter(deps RouterDeps) *gin.Engine {
 		// General ledger (accounting)
 		v1.GET("/chart-of-accounts", ledgerRead, api.ListChartOfAccounts)
 		w.POST("/chart-of-accounts", api.CreateChartAccount)
+		w.PATCH("/chart-of-accounts/:id", api.UpdateChartAccount)
+		w.DELETE("/chart-of-accounts/:id", api.DeleteChartAccount)
 		v1.GET("/ledger/entries", ledgerRead, api.ListJournalEntries)
 		v1.GET("/ledger/entries/:id", ledgerRead, api.GetJournalEntry)
 		w.POST("/ledger/entries", api.CreateJournalEntry)

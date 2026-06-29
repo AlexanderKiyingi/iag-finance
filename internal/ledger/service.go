@@ -66,6 +66,14 @@ func (s *Service) CreateChartAccount(ctx context.Context, code, name, accountTyp
 	return s.repo.CreateChartAccount(ctx, code, name, accountType, currency, parentID)
 }
 
+func (s *Service) UpdateChartAccount(ctx context.Context, id uuid.UUID, name, accountType, currency *string, parentID *uuid.UUID, active *bool) (*domain.ChartAccount, error) {
+	return s.repo.UpdateChartAccount(ctx, id, name, accountType, currency, parentID, active)
+}
+
+func (s *Service) DeactivateChartAccount(ctx context.Context, id uuid.UUID) (bool, error) {
+	return s.repo.DeactivateChartAccount(ctx, id)
+}
+
 func (s *Service) ListJournalEntries(ctx context.Context, limit, offset int) ([]domain.JournalEntry, error) {
 	return s.repo.ListJournalEntries(ctx, limit, offset)
 }

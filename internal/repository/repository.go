@@ -86,9 +86,9 @@ type CreateJournalParams struct {
 	SourceService  *string
 	CorrelationID  *string
 	CreatedBy      *uuid.UUID
-	AccountingDate time.Time        // zero → defaults to the posting date / today
-	Currency       string           // transaction currency of the lines (zero → base)
-	FXRate         decimal.Decimal  // currency→base rate (zero → 1)
+	AccountingDate time.Time       // zero → defaults to the posting date / today
+	Currency       string          // transaction currency of the lines (zero → base)
+	FXRate         decimal.Decimal // currency→base rate (zero → 1)
 	Lines          []ResolvedLine
 }
 
@@ -181,6 +181,50 @@ func (r *Repository) CreateChartAccount(ctx context.Context, code, name, account
 		return nil, err
 	}
 	return &a, nil
+}
+
+// UpdateChartAccount applies a partial update. Each nullable argument is left
+// unchanged when nil (COALESCE), so callers send only the fields they touch.
+// `code` is intentionally immutable — it is the human-facing identity and is
+// referenced by code elsewhere (e.g. budgets). Returns (nil, nil) when no row
+// with the id exists.
+func (r *Repository) UpdateChartAccount(ctx context.Context, id uuid.UUID, name, accountType, currency *string, parentID *uuid.UUID, active *bool) (*domain.ChartAccount, error) {
+	row := r.pool.QueryRow(ctx, `
+		UPDATE chart_of_accounts SET
+			name = COALESCE($2, name),
+			account_type = COALESCE($3, account_type),
+			currency = COALESCE($4, currency),
+			parent_id = COALESCE($5, parent_id),
+			active = COALESCE($6, active),
+			updated_at = NOW()
+		WHERE id = $1
+		RETURNING id, code, name, account_type, parent_id, currency, active, created_at, updated_at
+	`, id, name, accountType, currency, parentID, active)
+
+	var a domain.ChartAccount
+	if err := row.Scan(&a.ID, &a.Code, &a.Name, &a.AccountType, &a.ParentID, &a.Currency, &a.Active, &a.CreatedAt, &a.UpdatedAt); err != nil {
+		if err == pgx.ErrNoRows {
+			return nil, nil
+		}
+		return nil, err
+	}
+	return &a, nil
+}
+
+// DeactivateChartAccount soft-deletes an account by clearing its active flag.
+// A hard delete is unsafe: journal_lines.account_id has no ON DELETE rule, so
+// any account that has ever been posted to cannot be removed. Deactivation
+// hides it from the (active-only) list without breaking historical postings.
+// Returns false when no active row with the id exists (already gone / unknown).
+func (r *Repository) DeactivateChartAccount(ctx context.Context, id uuid.UUID) (bool, error) {
+	tag, err := r.pool.Exec(ctx, `
+		UPDATE chart_of_accounts SET active = FALSE, updated_at = NOW()
+		WHERE id = $1 AND active = TRUE
+	`, id)
+	if err != nil {
+		return false, err
+	}
+	return tag.RowsAffected() > 0, nil
 }
 
 func (r *Repository) GetAccountByCode(ctx context.Context, code string) (*domain.ChartAccount, error) {

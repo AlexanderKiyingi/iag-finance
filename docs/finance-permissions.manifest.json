@@ -176,6 +176,22 @@
       ]
     },
     {
+      "method": "PATCH",
+      "path": "/chart-of-accounts/:id",
+      "permissions": [
+        "finance.manage_coa",
+        "finance.change_ledger"
+      ]
+    },
+    {
+      "method": "DELETE",
+      "path": "/chart-of-accounts/:id",
+      "permissions": [
+        "finance.manage_coa",
+        "finance.change_ledger"
+      ]
+    },
+    {
       "method": "POST",
       "path": "/ledger/entries",
       "permissions": [
@@ -386,6 +402,30 @@
     {
       "method": "DELETE",
       "path": "/invoices/:no",
+      "permissions": [
+        "finance.change_ledger",
+        "finance.change_operations"
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/bills",
+      "permissions": [
+        "finance.change_ledger",
+        "finance.change_operations"
+      ]
+    },
+    {
+      "method": "PATCH",
+      "path": "/bills/:no",
+      "permissions": [
+        "finance.change_ledger",
+        "finance.change_operations"
+      ]
+    },
+    {
+      "method": "DELETE",
+      "path": "/bills/:no",
       "permissions": [
         "finance.change_ledger",
         "finance.change_operations"
