@@ -345,6 +345,22 @@
     },
     {
       "method": "POST",
+      "path": "/customers",
+      "permissions": [
+        "finance.manage_dimensions",
+        "finance.change_ledger"
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/vendors",
+      "permissions": [
+        "finance.manage_dimensions",
+        "finance.change_ledger"
+      ]
+    },
+    {
+      "method": "POST",
       "path": "/billing/invoices",
       "permissions": [
         "finance.issue_invoice",

@@ -165,6 +165,12 @@ func NewRouter(deps RouterDeps) *gin.Engine {
 		v1.GET("/projects/:id/profit-and-loss", ledgerRead, api.ProjectPL)
 		v1.GET("/cost-centers", ledgerRead, api.ListCostCenters)
 		w.POST("/cost-centers", api.CreateCostCenter)
+		// Customer / vendor billing-party master — backs the frontend
+		// supplier/customer dropdowns and inline create-new.
+		v1.GET("/customers", ledgerRead, api.ListCustomers)
+		w.POST("/customers", api.CreateCustomer)
+		v1.GET("/vendors", ledgerRead, api.ListVendors)
+		w.POST("/vendors", api.CreateVendor)
 		v1.GET("/invoices", ledgerRead, api.ListInvoicesLegacy)
 		w.POST("/invoices", api.CreateInvoiceLegacy)
 		v1.GET("/invoices/funnel", ledgerRead, api.InvoiceFunnel)

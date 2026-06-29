@@ -193,6 +193,19 @@ func (s *Service) ProjectPL(ctx context.Context, projectID uuid.UUID, from, to *
 	return s.repo.ProjectPL(ctx, projectID, from, to)
 }
 
+func (s *Service) CreateCustomer(ctx context.Context, code, name, email, phone, currency string) (*repository.Party, error) {
+	return s.repo.CreateCustomer(ctx, code, name, email, phone, currency)
+}
+func (s *Service) ListCustomers(ctx context.Context) ([]repository.Party, error) {
+	return s.repo.ListCustomers(ctx)
+}
+func (s *Service) CreateVendor(ctx context.Context, code, name, email, phone, currency string) (*repository.Party, error) {
+	return s.repo.CreateVendor(ctx, code, name, email, phone, currency)
+}
+func (s *Service) ListVendors(ctx context.Context) ([]repository.Party, error) {
+	return s.repo.ListVendors(ctx)
+}
+
 // Entities lists configured accounting entities.
 func (s *Service) Entities(ctx context.Context) ([]repository.Entity, error) {
 	return s.repo.ListEntities(ctx)
