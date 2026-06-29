@@ -152,6 +152,7 @@ func NewRouter(deps RouterDeps) *gin.Engine {
 		w.POST("/budgets", api.UpsertBudget)
 		v1.GET("/reports/budget-vs-actual", ledgerRead, api.BudgetVsActual)
 		v1.GET("/reports/cash-flow", ledgerRead, api.CashFlow)
+		v1.GET("/reports/control-reconciliation", ledgerRead, api.ControlReconciliation)
 		v1.GET("/billing/invoices", ledgerRead, api.ListBillingInvoices)
 		w.POST("/billing/invoices", api.CreateInvoice)
 		v1.GET("/billing/invoices/:id", ledgerRead, api.GetBillingInvoice)
@@ -185,6 +186,9 @@ func NewRouter(deps RouterDeps) *gin.Engine {
 		w.DELETE("/bills/:no", api.DeleteBillLegacy)
 		v1.GET("/banking/accounts", ledgerRead, api.ListBankingAccounts)
 		v1.GET("/banking/transactions", ledgerRead, api.ListBankingTransactions)
+		// Bank reference list (licensed banks + mobile money + petty cash) backing
+		// the frontend "Bank Name" dropdown when creating a bank account.
+		v1.GET("/banks", ledgerRead, api.ListBanks)
 
 		// AR / AP — POST publishes sale.completed / invoice.posted for async GL booking
 		v1.GET("/ar/items", ledgerRead, api.ListARItems)

@@ -137,6 +137,22 @@ func (a *API) BudgetVsActual(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"rows": rows})
 }
 
+// ControlReconciliation ties each subledger control account (AR 1100, AP 2000)
+// to the sum of its open items so a GL↔subledger drift is surfaced.
+func (a *API) ControlReconciliation(c *gin.Context) {
+	scope, err := a.entityScope(c)
+	if err != nil {
+		apierr.JSONStatus(c, http.StatusInternalServerError, "could not resolve entity scope")
+		return
+	}
+	rows, err := a.Ledger.ControlReconciliation(c.Request.Context(), scope)
+	if err != nil {
+		apierr.JSONStatus(c, http.StatusInternalServerError, "could not build control reconciliation")
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"rows": rows})
+}
+
 // CashFlow reports cash movement by activity category over ?from=&to=.
 func (a *API) CashFlow(c *gin.Context) {
 	scope, err := a.entityScope(c)

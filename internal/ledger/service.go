@@ -134,6 +134,10 @@ func (s *Service) TrialBalance(ctx context.Context, from, to *time.Time, entityI
 	return s.repo.TrialBalance(ctx, from, to, entityIDs)
 }
 
+func (s *Service) ControlReconciliation(ctx context.Context, entityIDs []uuid.UUID) ([]repository.ControlReconRow, error) {
+	return s.repo.ControlReconciliation(ctx, entityIDs)
+}
+
 func (s *Service) ARAging(ctx context.Context) ([]repository.ARAgingBucket, error) {
 	return s.repo.ARAging(ctx)
 }
