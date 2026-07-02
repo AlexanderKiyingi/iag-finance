@@ -121,41 +121,45 @@ var defaultAccounts = []struct {
 	Code        string
 	Name        string
 	AccountType string
+	IsCash      bool
 }{
-	{"1000", "Cash", "asset"},
-	{"1100", "Accounts Receivable", "asset"},
-	{"2000", "Accounts Payable", "liability"},
-	{"3000", "Retained Earnings", "equity"},
-	{"4000", "Sales Revenue", "revenue"},
-	{"5000", "Cost of Goods Sold", "expense"},
-	{"5100", "Operating Expenses", "expense"},
-	{"2100", "VAT Payable", "liability"},
+	{"1000", "Cash", "asset", true},
+	{"1100", "Accounts Receivable", "asset", false},
+	{"2000", "Accounts Payable", "liability", false},
+	{"3000", "Retained Earnings", "equity", false},
+	{"4000", "Sales Revenue", "revenue", false},
+	{"5000", "Cost of Goods Sold", "expense", false},
+	{"5100", "Operating Expenses", "expense", false},
+	{"2100", "VAT Payable", "liability", false},
 	// IFRS 9 — expected-credit-loss allowance & bad-debt accounts (migration 039).
-	{"1190", "Allowance for Doubtful Debts", "asset"},
-	{"5400", "Bad Debt Expense", "expense"},
-	{"4300", "Bad Debt Recovery", "revenue"},
+	{"1190", "Allowance for Doubtful Debts", "asset", false},
+	{"5400", "Bad Debt Expense", "expense", false},
+	{"4300", "Bad Debt Recovery", "revenue", false},
 	// IFRS 15 — deferred & accrued revenue (migration 040).
-	{"2300", "Deferred Revenue", "liability"},
-	{"1200", "Accrued Revenue", "asset"},
+	{"2300", "Deferred Revenue", "liability", false},
+	{"1200", "Accrued Revenue", "asset", false},
 	// IAS 16 / IAS 36 — impairment & revaluation (migration 041).
-	{"5310", "Impairment Loss", "expense"},
-	{"3100", "Revaluation Surplus", "equity"},
+	{"5310", "Impairment Loss", "expense", false},
+	{"3100", "Revaluation Surplus", "equity", false},
 	// IAS 37 — provisions & decommissioning (migration 042).
-	{"2400", "Provisions", "liability"},
-	{"2410", "Decommissioning Provision", "liability"},
-	{"5500", "Provision Expense", "expense"},
-	{"5510", "Finance Cost - Unwinding of Discount", "expense"},
+	{"2400", "Provisions", "liability", false},
+	{"2410", "Decommissioning Provision", "liability", false},
+	{"5500", "Provision Expense", "expense", false},
+	{"5510", "Finance Cost - Unwinding of Discount", "expense", false},
 	// Three-way match — purchase price variance (migration 043).
-	{"5150", "Purchase Price Variance", "expense"},
+	{"5150", "Purchase Price Variance", "expense", false},
 }
 
 func (r *Repository) SeedChartOfAccounts(ctx context.Context) error {
 	for _, a := range defaultAccounts {
+		// Set is_cash_equivalent on conflict too, so the cash-flow flag is correct
+		// on a fresh database regardless of seed/migration order (the name is left
+		// untouched to preserve any operator rename).
 		_, err := r.pool.Exec(ctx, `
-			INSERT INTO chart_of_accounts (code, name, account_type)
-			VALUES ($1, $2, $3)
-			ON CONFLICT (code) DO NOTHING
-		`, a.Code, a.Name, a.AccountType)
+			INSERT INTO chart_of_accounts (code, name, account_type, is_cash_equivalent)
+			VALUES ($1, $2, $3, $4)
+			ON CONFLICT (code) DO UPDATE SET is_cash_equivalent = EXCLUDED.is_cash_equivalent
+		`, a.Code, a.Name, a.AccountType, a.IsCash)
 		if err != nil {
 			return err
 		}

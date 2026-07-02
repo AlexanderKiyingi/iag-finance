@@ -16,16 +16,19 @@ type CashFlowRow struct {
 
 // CashFlow summarises cash movement over [from, to] for the entity scope,
 // classified into operating / investing / financing activities. For every posted
-// entry that touches the Cash account (1000), the cash delta equals the net of
-// the entry's non-cash legs; summing those legs by category attributes the cash
-// flow without needing opening balances. The categories sum to the net change in
-// cash for the period.
+// entry that touches a cash-equivalent account (chart_of_accounts.is_cash_equivalent
+// — seeded 1000 Cash, plus any bank/cash account an operator flags), the cash
+// delta equals the net of the entry's non-cash legs; summing those legs by
+// category attributes the cash flow without needing opening balances. Excluding
+// all cash-equivalent legs keeps transfers between two cash accounts out of the
+// statement (they net to zero cash effect). The categories sum to the net change
+// in cash for the period.
 func (r *Repository) CashFlow(ctx context.Context, from, to *time.Time, entityIDs []uuid.UUID) ([]CashFlowRow, error) {
 	rows, err := r.pool.Query(ctx, `
 		WITH cash_entries AS (
 			SELECT DISTINCT jl.journal_entry_id
 			FROM journal_lines jl JOIN chart_of_accounts coa ON coa.id = jl.account_id
-			WHERE coa.code = '1000'
+			WHERE coa.is_cash_equivalent
 		)
 		SELECT
 			CASE
@@ -41,7 +44,7 @@ func (r *Repository) CashFlow(ctx context.Context, from, to *time.Time, entityID
 			AND ($2::date IS NULL OR je.accounting_date <= $2)
 			AND je.entity_id = ANY($3::uuid[])
 		WHERE jl.journal_entry_id IN (SELECT journal_entry_id FROM cash_entries)
-		  AND coa.code <> '1000'
+		  AND NOT coa.is_cash_equivalent
 		GROUP BY category
 		ORDER BY category
 	`, from, to, entityIDs)
