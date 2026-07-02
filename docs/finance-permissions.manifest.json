@@ -98,6 +98,10 @@
       "description": "Manage prepaid-expense schedules and run amortization"
     },
     {
+      "codename": "finance.manage_leases",
+      "description": "Manage IFRS 16 leases and run lease periods"
+    },
+    {
       "codename": "finance.view_consolidated",
       "description": "View consolidated (cross-entity) financial reports"
     },
@@ -632,6 +636,22 @@
       "path": "/prepayments/amortization-run",
       "permissions": [
         "finance.manage_prepayments",
+        "finance.change_ledger"
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/leases",
+      "permissions": [
+        "finance.manage_leases",
+        "finance.change_ledger"
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/leases/run",
+      "permissions": [
+        "finance.manage_leases",
         "finance.change_ledger"
       ]
     },

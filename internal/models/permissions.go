@@ -37,6 +37,7 @@ func PermissionDescriptors() []PermissionDescriptor {
 		{Name: "finance.manage_provisions", Description: "Run ECL provisioning and write off / recover receivables"},
 		{Name: "finance.manage_revenue", Description: "Manage revenue-recognition schedules and run recognition"},
 		{Name: "finance.manage_prepayments", Description: "Manage prepaid-expense schedules and run amortization"},
+		{Name: "finance.manage_leases", Description: "Manage IFRS 16 leases and run lease periods"},
 
 		// Scoped read / cross-entity permissions.
 		{Name: "finance.view_consolidated", Description: "View consolidated (cross-entity) financial reports"},

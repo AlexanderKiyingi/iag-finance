@@ -226,6 +226,10 @@ func NewRouter(deps RouterDeps) *gin.Engine {
 		v1.GET("/prepayments", ledgerRead, api.ListPrepayments)
 		w.POST("/prepayments", api.CreatePrepayment)
 		w.POST("/prepayments/amortization-run", api.RunAmortization)
+		// IFRS 16 — leases (right-of-use asset + lease liability).
+		v1.GET("/leases", ledgerRead, api.ListLeases)
+		w.POST("/leases", api.CreateLease)
+		w.POST("/leases/run", api.RunLeasePeriod)
 		// IAS 37 — provisions & decommissioning.
 		v1.GET("/provisions/liability", ledgerRead, api.ListProvisions)
 		w.POST("/provisions/liability/recognize", api.RecognizeProvision)

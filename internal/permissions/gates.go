@@ -116,6 +116,10 @@ func RouteGates() []RouteGate {
 		{"POST", "/prepayments", granular("finance.manage_prepayments")},
 		{"POST", "/prepayments/amortization-run", granular("finance.manage_prepayments")},
 
+		// IFRS 16 leases
+		{"POST", "/leases", granular("finance.manage_leases")},
+		{"POST", "/leases/run", granular("finance.manage_leases")},
+
 		// IAS 37 provisions
 		{"POST", "/provisions/liability/recognize", granular("finance.manage_provisions")},
 		{"POST", "/provisions/liability/unwind", granular("finance.manage_provisions")},

@@ -140,6 +140,12 @@ var defaultAccounts = []struct {
 	{"1200", "Accrued Revenue", "asset", false},
 	// IAS 1 matching — prepaid-expense amortization (migration 052).
 	{"1250", "Prepaid Expenses", "asset", false},
+	// IFRS 16 — leases (migration 053).
+	{"1600", "Right-of-Use Assets", "asset", false},
+	{"1610", "Accumulated Depreciation - ROU", "asset", false},
+	{"2500", "Lease Liability", "liability", false},
+	{"5320", "Depreciation - Right-of-Use Assets", "expense", false},
+	{"5600", "Interest Expense - Leases", "expense", false},
 	// IAS 16 / IAS 36 — impairment & revaluation (migration 041).
 	{"5310", "Impairment Loss", "expense", false},
 	{"3100", "Revaluation Surplus", "equity", false},
