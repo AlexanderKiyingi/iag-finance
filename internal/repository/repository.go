@@ -146,6 +146,11 @@ var defaultAccounts = []struct {
 	{"2500", "Lease Liability", "liability", false},
 	{"5320", "Depreciation - Right-of-Use Assets", "expense", false},
 	{"5600", "Interest Expense - Leases", "expense", false},
+	// IAS 12 — income taxes (migration 054).
+	{"1700", "Deferred Tax Asset", "asset", false},
+	{"2600", "Income Tax Payable", "liability", false},
+	{"2610", "Deferred Tax Liability", "liability", false},
+	{"5700", "Income Tax Expense", "expense", false},
 	// IAS 16 / IAS 36 — impairment & revaluation (migration 041).
 	{"5310", "Impairment Loss", "expense", false},
 	{"3100", "Revaluation Surplus", "equity", false},

@@ -120,6 +120,10 @@ func RouteGates() []RouteGate {
 		{"POST", "/leases", granular("finance.manage_leases")},
 		{"POST", "/leases/run", granular("finance.manage_leases")},
 
+		// IAS 12 income taxes (reuses the tax-management permission)
+		{"POST", "/income-tax/current-run", granular("finance.manage_tax")},
+		{"POST", "/income-tax/deferred", granular("finance.manage_tax")},
+
 		// IAS 37 provisions
 		{"POST", "/provisions/liability/recognize", granular("finance.manage_provisions")},
 		{"POST", "/provisions/liability/unwind", granular("finance.manage_provisions")},

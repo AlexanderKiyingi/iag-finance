@@ -230,6 +230,11 @@ func NewRouter(deps RouterDeps) *gin.Engine {
 		v1.GET("/leases", ledgerRead, api.ListLeases)
 		w.POST("/leases", api.CreateLease)
 		w.POST("/leases/run", api.RunLeasePeriod)
+		// IAS 12 — income taxes (current provision + deferred tax).
+		v1.GET("/income-tax/runs", ledgerRead, api.ListIncomeTaxRuns)
+		w.POST("/income-tax/current-run", api.RunCurrentTax)
+		v1.GET("/income-tax/deferred", ledgerRead, api.ListDeferredTaxItems)
+		w.POST("/income-tax/deferred", api.RecognizeDeferredTax)
 		// IAS 37 — provisions & decommissioning.
 		v1.GET("/provisions/liability", ledgerRead, api.ListProvisions)
 		w.POST("/provisions/liability/recognize", api.RecognizeProvision)

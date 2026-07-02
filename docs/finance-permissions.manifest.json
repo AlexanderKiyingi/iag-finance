@@ -657,6 +657,22 @@
     },
     {
       "method": "POST",
+      "path": "/income-tax/current-run",
+      "permissions": [
+        "finance.manage_tax",
+        "finance.change_ledger"
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/income-tax/deferred",
+      "permissions": [
+        "finance.manage_tax",
+        "finance.change_ledger"
+      ]
+    },
+    {
+      "method": "POST",
       "path": "/provisions/liability/recognize",
       "permissions": [
         "finance.manage_provisions",
