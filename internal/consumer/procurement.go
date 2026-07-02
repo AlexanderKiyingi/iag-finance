@@ -110,7 +110,7 @@ func (h *procurementHandler) handlePaymentAuthorized(ctx context.Context, env pl
 
 // invoicePostedOutbox builds the invoice.posted outbox event for the consumer,
 // or nil when publishing is disabled. Written atomically with the AP item.
-func (h *procurementHandler) invoicePostedOutbox(documentRef, vendorRef, amount, currency, poRef, vatAmount string) *repository.OutboxEvent {
+func (h *procurementHandler) invoicePostedOutbox(documentRef, vendorRef, amount, currency, poRef, vatAmount, taxCode string, reverseCharge bool) *repository.OutboxEvent {
 	if h.bus == nil || !h.bus.Enabled() {
 		return nil
 	}
@@ -124,6 +124,13 @@ func (h *procurementHandler) invoicePostedOutbox(documentRef, vendorRef, amount,
 	}
 	if vatAmount != "" {
 		payload["vatAmount"] = vatAmount
+	}
+	// Carry reverse-charge intent so the GL handler self-assesses VAT on the net.
+	if reverseCharge {
+		payload["reverseCharge"] = true
+		if taxCode != "" {
+			payload["taxCode"] = taxCode
+		}
 	}
 	return &repository.OutboxEvent{
 		Topic:        h.bus.FinanceTopic(),
@@ -165,8 +172,11 @@ func (h *procurementHandler) handleInvoiceReceived(ctx context.Context, env plat
 	poRef = strings.TrimSpace(poRef)
 	vatAmount, _ := data["vatAmount"].(string)
 	vatAmount = strings.TrimSpace(vatAmount)
+	taxCode, _ := data["taxCode"].(string)
+	taxCode = strings.TrimSpace(taxCode)
+	reverseCharge, _ := data["reverseCharge"].(bool)
 	// invoice.posted is enqueued to the outbox in the same tx as the AP item.
-	outbox := h.invoicePostedOutbox(documentRef, vendorRef, amount, currency, poRef, vatAmount)
+	outbox := h.invoicePostedOutbox(documentRef, vendorRef, amount, currency, poRef, vatAmount, taxCode, reverseCharge)
 	item, err := h.ledger.CreateAPItem(ctx, vendorRef, documentRef, desc, amount, currency, due, outbox)
 	if err != nil {
 		if repository.IsUniqueViolation(err) {

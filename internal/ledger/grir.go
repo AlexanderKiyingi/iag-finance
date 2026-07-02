@@ -16,6 +16,7 @@ const (
 	grniExpenseAccount  = "5000" // expense / COGS (goods received)
 	grIRClearingAccount = "2150" // GR/IR clearing (liability)
 	inputVATAccount     = "1300" // recoverable input VAT (purchases)
+	outputVATAccount    = "2100" // output VAT (payable) — used for reverse charge
 	apControlAccount    = "2000" // accounts payable
 )
 
@@ -74,7 +75,13 @@ func (s *Service) BookGRNAccrual(ctx context.Context, eventID, eventType, source
 //
 // poRef "" + vat 0 reduces to the prior Dr expense / Cr AP. Idempotent on eventID;
 // the accrual-clearing bookkeeping runs as a side-effect in the same transaction.
-func (s *Service) BookAPInvoice(ctx context.Context, eventID, eventType, source, correlationID, description, currency, poRef string, gross, vat decimal.Decimal) (*domain.JournalEntry, error) {
+//
+// reverseCharge marks a supply where the buyer self-assesses VAT (the supplier
+// charges none): the AP liability is the net only, and the buyer books both
+// recoverable input VAT and payable output VAT for net × the taxCode's rate — a
+// net-zero cash effect added to the same entry, so the reverse-charge VAT is
+// recognised exactly once alongside the AP booking.
+func (s *Service) BookAPInvoice(ctx context.Context, eventID, eventType, source, correlationID, description, currency, poRef string, gross, vat decimal.Decimal, reverseCharge bool, taxCode string) (*domain.JournalEntry, error) {
 	if gross.LessThanOrEqual(decimal.Zero) {
 		return nil, ErrEmptyEntry
 	}
@@ -83,7 +90,20 @@ func (s *Service) BookAPInvoice(ctx context.Context, eventID, eventType, source,
 	}
 	net := gross.Sub(vat)
 
-	lines := make([]LineInput, 0, 3)
+	// Reverse charge: the supplier bills no VAT, so gross is the net payable and
+	// the buyer self-assesses VAT on it from the tax code's rate.
+	rcVAT := decimal.Zero
+	if reverseCharge && taxCode != "" {
+		rate, _, ok, err := s.repo.GetTaxCode(ctx, taxCode)
+		if err != nil {
+			return nil, err
+		}
+		if ok {
+			rcVAT = net.Mul(rate).Round(2)
+		}
+	}
+
+	lines := make([]LineInput, 0, 5)
 	netToGRIR := poRef != "" && net.IsPositive()
 	if netToGRIR {
 		lines = append(lines, LineInput{AccountCode: grIRClearingAccount, Debit: net, Memo: "GR/IR clearing"})
@@ -94,6 +114,13 @@ func (s *Service) BookAPInvoice(ctx context.Context, eventID, eventType, source,
 		lines = append(lines, LineInput{AccountCode: inputVATAccount, Debit: vat, Memo: "Input VAT"})
 	}
 	lines = append(lines, LineInput{AccountCode: apControlAccount, Credit: gross, Memo: "AP liability"})
+	if rcVAT.IsPositive() {
+		// Self-assessed reverse-charge VAT: recoverable input vs payable output.
+		lines = append(lines,
+			LineInput{AccountCode: inputVATAccount, Debit: rcVAT, Memo: "Reverse-charge input VAT"},
+			LineInput{AccountCode: outputVATAccount, Credit: rcVAT, Memo: "Reverse-charge output VAT"},
+		)
+	}
 
 	if err := validateBalance(lines); err != nil {
 		return nil, err

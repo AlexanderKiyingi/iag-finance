@@ -99,6 +99,10 @@ type invoicePostedData struct {
 	// VatAmount, when present, is the VAT portion already included in Amount.
 	PoRef     string `json:"poRef"`
 	VatAmount string `json:"vatAmount"`
+	// ReverseCharge + TaxCode drive buyer self-assessed VAT (supplier bills none):
+	// the AP is the net, and net × rate is booked as offsetting input/output VAT.
+	ReverseCharge bool   `json:"reverseCharge"`
+	TaxCode       string `json:"taxCode"`
 }
 
 type fleetFuelRecordedData struct {
@@ -159,7 +163,8 @@ func (h *financeHandler) handleInvoicePosted(ctx context.Context, env platformev
 	// Books AP, clearing any GR/IR accrual for the PO and splitting VAT when the
 	// event carries it. poRef "" + vat 0 reduces to the prior Dr 5000 / Cr 2000.
 	entry, err := h.ledger.BookAPInvoice(ctx, env.ID, env.Type, env.Source, env.CorrelationID, desc,
-		data.Currency, strings.TrimSpace(data.PoRef), amount, parseAmount(data.VatAmount))
+		data.Currency, strings.TrimSpace(data.PoRef), amount, parseAmount(data.VatAmount),
+		data.ReverseCharge, strings.TrimSpace(data.TaxCode))
 	if err == nil {
 		h.logBooked(ctx, env, entry)
 		h.linkOpenItem(ctx, env.Type, data.DocumentRef, entry, env.ID)
