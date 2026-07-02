@@ -11,10 +11,15 @@ import (
 	"github.com/iag-finance/backend/internal/ledger"
 )
 
-const warehouseAssetDisposed = "warehouse.asset.disposed"
+const (
+	warehouseAssetDisposed  = "warehouse.asset.disposed"
+	warehouseMovementPosted = "warehouse.movement.posted"
+)
 
 // warehouseHandler books finance effects of stores (warehouse) events on
-// iag.operations. Today: asset disposal → gain/loss on disposal.
+// iag.operations: asset disposal → gain/loss; valued stock movements →
+// perpetual-inventory GL (dormant until warehouse emits cost — see
+// handleMovementPosted).
 type warehouseHandler struct {
 	ledger *ledger.Service
 }
@@ -23,9 +28,41 @@ func (h *warehouseHandler) Handle(ctx context.Context, env platformevents.Envelo
 	switch env.Type {
 	case warehouseAssetDisposed:
 		return h.handleAssetDisposed(ctx, env)
+	case warehouseMovementPosted:
+		return h.handleMovementPosted(ctx, env)
 	default:
 		return nil
 	}
+}
+
+// handleMovementPosted books the GL for a valued warehouse stock movement
+// (receipt → Dr 1400/Cr 2150, issue → Dr 5000/Cr 1400, adjustment → net 1400).
+// It is deliberately DORMANT until the warehouse emitter includes cost: a
+// movement with no/zero total_cost books nothing (BookInventoryMovement returns
+// a clean no-op), so enabling the finance consumer ahead of the emitter is safe.
+// Idempotent on env.ID (the warehouse movement_id).
+func (h *warehouseHandler) handleMovementPosted(ctx context.Context, env platformevents.Envelope) error {
+	data := env.Data
+	if data == nil {
+		return nil
+	}
+	movementType, _ := data["movement_type"].(string)
+	ref, _ := data["ref"].(string)
+	currency, _ := data["currency"].(string)
+	if strings.TrimSpace(currency) == "" {
+		currency = "UGX"
+	}
+	totalCost := disposalAmount(data["total_cost"]) // shared numeric/string coercion
+
+	entry, err := h.ledger.BookInventoryMovement(ctx, env.ID, env.Type, env.Source, env.CorrelationID,
+		strings.TrimSpace(movementType), strings.TrimSpace(ref), currency, totalCost)
+	if err != nil {
+		return err
+	}
+	if entry != nil {
+		slog.Info("finance booked inventory movement", "movementType", movementType, "ref", ref, "entry", entry.EntryNumber)
+	}
+	return nil
 }
 
 func (h *warehouseHandler) handleAssetDisposed(ctx context.Context, env platformevents.Envelope) error {
