@@ -41,6 +41,10 @@ type CreateFixedAssetInput struct {
 	InServiceDate    time.Time
 	UsefulLifeMonths int
 	Currency         string
+	// Method is 'straight_line' (default) or 'declining_balance'. DecliningRate
+	// is the annual reducing-balance rate (e.g. 0.25), required for the latter.
+	Method        string
+	DecliningRate *decimal.Decimal
 	// CapitalizeFromAccount, when set, posts the capitalization reclass
 	// Dr 1500 Fixed Assets / Cr <this account> for Cost as of InServiceDate,
 	// atomically with the asset row. Empty = record-only (no GL entry).
@@ -58,12 +62,21 @@ func (r *Repository) CreateFixedAsset(ctx context.Context, in CreateFixedAssetIn
 	}
 	defer tx.Rollback(ctx)
 
+	method := in.Method
+	if method == "" {
+		method = "straight_line"
+	}
+	var decliningRate *string
+	if in.DecliningRate != nil {
+		s := in.DecliningRate.String()
+		decliningRate = &s
+	}
 	row := tx.QueryRow(ctx, `
-		INSERT INTO fa_assets (asset_ref, description, category, cost, salvage_value, in_service_date, useful_life_months, currency)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+		INSERT INTO fa_assets (asset_ref, description, category, cost, salvage_value, in_service_date, useful_life_months, currency, method, declining_rate)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10::numeric)
 		RETURNING id, asset_ref, description, category, cost::text, salvage_value::text, to_char(in_service_date,'YYYY-MM-DD'),
 		          useful_life_months, method, accumulated_depreciation::text, currency, status, created_at
-	`, in.AssetRef, in.Description, in.Category, in.Cost, in.SalvageValue, in.InServiceDate, in.UsefulLifeMonths, currency)
+	`, in.AssetRef, in.Description, in.Category, in.Cost, in.SalvageValue, in.InServiceDate, in.UsefulLifeMonths, currency, method, decliningRate)
 	asset, err := scanFixedAsset(row)
 	if err != nil {
 		return nil, err
@@ -183,7 +196,8 @@ func (r *Repository) RunDepreciation(ctx context.Context, period string, postedA
 	defer tx.Rollback(ctx)
 
 	rows, err := tx.Query(ctx, `
-		SELECT a.id, a.cost::text, a.salvage_value::text, a.useful_life_months, a.accumulated_depreciation::text
+		SELECT a.id, a.cost::text, a.salvage_value::text, a.useful_life_months, a.accumulated_depreciation::text,
+		       a.method, COALESCE(a.declining_rate, 0)::text
 		FROM fa_assets a
 		LEFT JOIN fa_depreciation_entries e ON e.asset_id = a.id AND e.period = $1
 		WHERE a.status = 'active' AND a.in_service_date <= $2 AND e.id IS NULL
@@ -194,21 +208,24 @@ func (r *Repository) RunDepreciation(ctx context.Context, period string, postedA
 		return nil, err
 	}
 	type assetRow struct {
-		id                            uuid.UUID
-		cost, salvage, accumulated    decimal.Decimal
-		life                          int
+		id                         uuid.UUID
+		cost, salvage, accumulated decimal.Decimal
+		life                       int
+		method                     string
+		decliningRate              decimal.Decimal
 	}
 	var assets []assetRow
 	for rows.Next() {
 		var ar assetRow
-		var cost, salvage, accum string
-		if err := rows.Scan(&ar.id, &cost, &salvage, &ar.life, &accum); err != nil {
+		var cost, salvage, accum, rate string
+		if err := rows.Scan(&ar.id, &cost, &salvage, &ar.life, &accum, &ar.method, &rate); err != nil {
 			rows.Close()
 			return nil, err
 		}
 		ar.cost, _ = decimal.NewFromString(cost)
 		ar.salvage, _ = decimal.NewFromString(salvage)
 		ar.accumulated, _ = decimal.NewFromString(accum)
+		ar.decliningRate, _ = decimal.NewFromString(rate)
 		assets = append(assets, ar)
 	}
 	rows.Close()
@@ -224,7 +241,15 @@ func (r *Repository) RunDepreciation(ctx context.Context, period string, postedA
 		if remaining.LessThanOrEqual(decimal.Zero) {
 			continue
 		}
-		monthly := depreciable.Div(decimal.NewFromInt(int64(a.life))).Round(2)
+		// Reducing-balance charges rate on net book value (cost − accumulated);
+		// straight-line spreads the depreciable base evenly over the life.
+		var monthly decimal.Decimal
+		if a.method == "declining_balance" && a.decliningRate.IsPositive() {
+			nbv := a.cost.Sub(a.accumulated)
+			monthly = nbv.Mul(a.decliningRate).Div(decimal.NewFromInt(12)).Round(2)
+		} else {
+			monthly = depreciable.Div(decimal.NewFromInt(int64(a.life))).Round(2)
+		}
 		amount := monthly
 		if amount.GreaterThan(remaining) {
 			amount = remaining

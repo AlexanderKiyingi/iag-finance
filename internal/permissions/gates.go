@@ -52,6 +52,9 @@ func RouteGates() []RouteGate {
 		{"POST", "/ledger/year-end/:year/close", granular("finance.close_period")},
 		{"POST", "/fixed-assets", granular("finance.run_depreciation")},
 		{"POST", "/fixed-assets/depreciation/run", granular("finance.run_depreciation")},
+		{"POST", "/fixed-assets/impair", granular("finance.run_depreciation")},
+		{"POST", "/fixed-assets/reverse-impairment", granular("finance.run_depreciation")},
+		{"POST", "/fixed-assets/revalue", granular("finance.run_depreciation")},
 
 		// Approvals
 		{"POST", "/approvals", ledgerWrite()},
@@ -62,6 +65,7 @@ func RouteGates() []RouteGate {
 		{"POST", "/fx/rates", granular("finance.manage_fx")},
 		{"POST", "/fx/revalue", granular("finance.manage_fx")},
 		{"POST", "/tax-codes", granular("finance.manage_tax")},
+		{"POST", "/tax/reverse-charge", granular("finance.manage_tax")},
 		{"POST", "/entities", granular("finance.manage_entities")},
 		{"POST", "/budgets", granular("finance.manage_budgets")},
 		{"POST", "/projects", granular("finance.manage_dimensions")},
@@ -96,6 +100,29 @@ func RouteGates() []RouteGate {
 		{"POST", "/ap/debit-notes", ledgerWrite()},
 		{"POST", "/ap/items", ledgerWrite()},
 		{"POST", "/ap/items/:id/payments", ledgerWrite()},
+
+		// IFRS 9 provisioning / write-off / recovery
+		{"POST", "/provisions/ecl-run", granular("finance.manage_provisions")},
+		{"POST", "/provisions/write-off", granular("finance.manage_provisions")},
+		{"POST", "/provisions/recover", granular("finance.manage_provisions")},
+
+		// IFRS 15 revenue recognition
+		{"POST", "/revenue/schedules", granular("finance.manage_revenue")},
+		{"POST", "/revenue/recognition-run", granular("finance.manage_revenue")},
+		{"POST", "/revenue/obligations/:id/satisfy", granular("finance.manage_revenue")},
+		{"POST", "/revenue/accrue", granular("finance.manage_revenue")},
+
+		// IAS 37 provisions
+		{"POST", "/provisions/liability/recognize", granular("finance.manage_provisions")},
+		{"POST", "/provisions/liability/unwind", granular("finance.manage_provisions")},
+		{"POST", "/provisions/liability/utilize", granular("finance.manage_provisions")},
+		{"POST", "/provisions/liability/remeasure", granular("finance.manage_provisions")},
+		{"POST", "/provisions/liability/reverse", granular("finance.manage_provisions")},
+
+		// Three-way match
+		{"POST", "/procurement/match-check", ledgerWrite()},
+		{"POST", "/procurement/match-exceptions/:id/resolve", ledgerWrite()},
+		{"POST", "/procurement/match-variance/write-off", ledgerWrite()},
 
 		// Payroll
 		{"POST", "/payroll/runs", ledgerWrite()},

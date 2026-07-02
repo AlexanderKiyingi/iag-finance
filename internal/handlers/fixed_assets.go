@@ -38,6 +38,10 @@ func (a *API) RegisterFixedAsset(c *gin.Context) {
 		InServiceDate    string `json:"inServiceDate"`
 		UsefulLifeMonths int    `json:"usefulLifeMonths"`
 		Currency         string `json:"currency"`
+		// Method is 'straight_line' (default) or 'declining_balance'; the latter
+		// requires decliningRate (annual rate, e.g. 0.25).
+		Method        string `json:"method"`
+		DecliningRate string `json:"decliningRate"`
 		// RecordOnly skips the capitalization reclass (default: capitalize).
 		// CapitalizeFromAccount is the expense account the cost is reclassed out
 		// of (default 5000 — where procurement books capital purchases).
@@ -78,10 +82,21 @@ func (a *API) RegisterFixedAsset(c *gin.Context) {
 			capitalizeFrom = "5000"
 		}
 	}
+	method := strings.TrimSpace(body.Method)
+	var decliningRate *decimal.Decimal
+	if method == "declining_balance" {
+		rate, err := decimal.NewFromString(strings.TrimSpace(body.DecliningRate))
+		if err != nil || rate.LessThanOrEqual(decimal.Zero) || rate.GreaterThan(decimal.NewFromInt(1)) {
+			apierr.JSONStatus(c, http.StatusBadRequest, "decliningRate must be a fraction in (0,1] for declining_balance")
+			return
+		}
+		decliningRate = &rate
+	}
 	asset, err := a.Ledger.RegisterFixedAsset(c.Request.Context(), repository.CreateFixedAssetInput{
 		AssetRef: strings.TrimSpace(body.AssetRef), Description: body.Description, Category: body.Category,
 		Cost: cost, SalvageValue: salvage, InServiceDate: inService.UTC(),
 		UsefulLifeMonths: body.UsefulLifeMonths, Currency: strings.TrimSpace(body.Currency),
+		Method: method, DecliningRate: decliningRate,
 		CapitalizeFromAccount: capitalizeFrom,
 	})
 	if err != nil {
@@ -116,4 +131,127 @@ func (a *API) RunDepreciation(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusOK, run)
+}
+
+// assetEffectiveDate parses ?effectiveDate=YYYY-MM-DD (or JSON field), defaulting
+// to today.
+func assetEffectiveDate(raw string) (time.Time, error) {
+	if strings.TrimSpace(raw) == "" {
+		return time.Now().UTC(), nil
+	}
+	return time.Parse("2006-01-02", strings.TrimSpace(raw))
+}
+
+// ImpairAsset writes an asset down to its recoverable amount (IAS 36).
+func (a *API) ImpairAsset(c *gin.Context) {
+	var body struct {
+		AssetRef          string `json:"assetRef"`
+		RecoverableAmount string `json:"recoverableAmount"`
+		EffectiveDate     string `json:"effectiveDate"`
+	}
+	if err := c.ShouldBindJSON(&body); err != nil {
+		apierr.JSONStatus(c, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	if strings.TrimSpace(body.AssetRef) == "" {
+		apierr.JSONStatus(c, http.StatusBadRequest, "assetRef is required")
+		return
+	}
+	recoverable, err := decimal.NewFromString(strings.TrimSpace(body.RecoverableAmount))
+	if err != nil || recoverable.IsNegative() {
+		apierr.JSONStatus(c, http.StatusBadRequest, "recoverableAmount must be a non-negative amount")
+		return
+	}
+	effective, err := assetEffectiveDate(body.EffectiveDate)
+	if err != nil {
+		apierr.JSONStatus(c, http.StatusBadRequest, "effectiveDate must be YYYY-MM-DD")
+		return
+	}
+	asset, err := a.Ledger.ImpairAsset(c.Request.Context(), strings.TrimSpace(body.AssetRef), recoverable, effective, chainActor(c))
+	if err != nil {
+		apierr.JSONStatus(c, assetAdjustStatus(err), err.Error())
+		return
+	}
+	c.JSON(http.StatusCreated, asset)
+}
+
+// ReverseImpairmentAsset reverses a prior impairment (IAS 36).
+func (a *API) ReverseImpairmentAsset(c *gin.Context) {
+	var body struct {
+		AssetRef      string `json:"assetRef"`
+		Amount        string `json:"amount"`
+		EffectiveDate string `json:"effectiveDate"`
+	}
+	if err := c.ShouldBindJSON(&body); err != nil {
+		apierr.JSONStatus(c, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	if strings.TrimSpace(body.AssetRef) == "" {
+		apierr.JSONStatus(c, http.StatusBadRequest, "assetRef is required")
+		return
+	}
+	amount, err := decimal.NewFromString(strings.TrimSpace(body.Amount))
+	if err != nil || amount.LessThanOrEqual(decimal.Zero) {
+		apierr.JSONStatus(c, http.StatusBadRequest, "amount must be a positive amount")
+		return
+	}
+	effective, err := assetEffectiveDate(body.EffectiveDate)
+	if err != nil {
+		apierr.JSONStatus(c, http.StatusBadRequest, "effectiveDate must be YYYY-MM-DD")
+		return
+	}
+	asset, err := a.Ledger.ReverseImpairment(c.Request.Context(), strings.TrimSpace(body.AssetRef), amount, effective, chainActor(c))
+	if err != nil {
+		apierr.JSONStatus(c, assetAdjustStatus(err), err.Error())
+		return
+	}
+	c.JSON(http.StatusCreated, asset)
+}
+
+// RevalueAsset restates an asset to a new carrying amount (IAS 16 revaluation).
+func (a *API) RevalueAsset(c *gin.Context) {
+	var body struct {
+		AssetRef          string `json:"assetRef"`
+		NewCarryingAmount string `json:"newCarryingAmount"`
+		EffectiveDate     string `json:"effectiveDate"`
+	}
+	if err := c.ShouldBindJSON(&body); err != nil {
+		apierr.JSONStatus(c, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	if strings.TrimSpace(body.AssetRef) == "" {
+		apierr.JSONStatus(c, http.StatusBadRequest, "assetRef is required")
+		return
+	}
+	newCarrying, err := decimal.NewFromString(strings.TrimSpace(body.NewCarryingAmount))
+	if err != nil || newCarrying.IsNegative() {
+		apierr.JSONStatus(c, http.StatusBadRequest, "newCarryingAmount must be a non-negative amount")
+		return
+	}
+	effective, err := assetEffectiveDate(body.EffectiveDate)
+	if err != nil {
+		apierr.JSONStatus(c, http.StatusBadRequest, "effectiveDate must be YYYY-MM-DD")
+		return
+	}
+	asset, err := a.Ledger.RevalueAsset(c.Request.Context(), strings.TrimSpace(body.AssetRef), newCarrying, effective, chainActor(c))
+	if err != nil {
+		apierr.JSONStatus(c, assetAdjustStatus(err), err.Error())
+		return
+	}
+	c.JSON(http.StatusCreated, asset)
+}
+
+func assetAdjustStatus(err error) int {
+	switch {
+	case errors.Is(err, ledger.ErrPeriodClosed):
+		return http.StatusUnprocessableEntity
+	case errors.Is(err, repository.ErrAssetNotFound):
+		return http.StatusNotFound
+	case errors.Is(err, repository.ErrAssetInactive):
+		return http.StatusUnprocessableEntity
+	case errors.Is(err, repository.ErrNoImpairment):
+		return http.StatusUnprocessableEntity
+	default:
+		return http.StatusInternalServerError
+	}
 }

@@ -20,6 +20,7 @@ var (
 	ErrDuplicateEvent  = errors.New("source event already processed")
 	ErrAccountNotFound = errors.New("account not found")
 	ErrPeriodClosed    = errors.New("accounting period is closed")
+	ErrUnnaturalSide   = errors.New("account restricted to its natural balance side")
 
 	// Re-exported so handlers map repository reversal errors without importing
 	// the repository package directly.
@@ -66,8 +67,8 @@ func (s *Service) CreateChartAccount(ctx context.Context, code, name, accountTyp
 	return s.repo.CreateChartAccount(ctx, code, name, accountType, currency, parentID)
 }
 
-func (s *Service) UpdateChartAccount(ctx context.Context, id uuid.UUID, name, accountType, currency *string, parentID *uuid.UUID, active *bool) (*domain.ChartAccount, error) {
-	return s.repo.UpdateChartAccount(ctx, id, name, accountType, currency, parentID, active)
+func (s *Service) UpdateChartAccount(ctx context.Context, id uuid.UUID, name, accountType, currency *string, parentID *uuid.UUID, active, restrictNaturalSide *bool) (*domain.ChartAccount, error) {
+	return s.repo.UpdateChartAccount(ctx, id, name, accountType, currency, parentID, active, restrictNaturalSide)
 }
 
 func (s *Service) DeactivateChartAccount(ctx context.Context, id uuid.UUID) (bool, error) {
@@ -177,6 +178,11 @@ func (s *Service) BudgetVsActual(ctx context.Context, from, to *time.Time, entit
 // CashFlow summarises cash movement by activity category over a window.
 func (s *Service) CashFlow(ctx context.Context, from, to *time.Time, entityIDs []uuid.UUID) ([]repository.CashFlowRow, error) {
 	return s.repo.CashFlow(ctx, from, to, entityIDs)
+}
+
+// IndirectCashFlow reconciles net income to operating cash (IAS 7 indirect method).
+func (s *Service) IndirectCashFlow(ctx context.Context, from, to *time.Time, entityIDs []uuid.UUID) (repository.IndirectCashFlowReport, error) {
+	return s.repo.IndirectCashFlow(ctx, from, to, entityIDs)
 }
 
 func (s *Service) CreateProject(ctx context.Context, code, name string) (*repository.Dimension, error) {
@@ -437,6 +443,9 @@ func (s *Service) resolveLines(ctx context.Context, lines []LineInput) ([]reposi
 		if acct == nil {
 			return nil, fmt.Errorf("%w: %s", ErrAccountNotFound, l.AccountCode)
 		}
+		if acct.RestrictToNaturalSide && violatesNaturalSide(acct.AccountType, l.Debit, l.Credit) {
+			return nil, fmt.Errorf("%w: %s (%s) may only be posted on its natural side", ErrUnnaturalSide, l.AccountCode, acct.AccountType)
+		}
 		out = append(out, repository.ResolvedLine{
 			AccountID:    acct.ID,
 			Debit:        l.Debit,
@@ -455,4 +464,18 @@ func optionalString(s string) *string {
 		return nil
 	}
 	return &s
+}
+
+// violatesNaturalSide reports whether a line posts to an account's non-natural
+// side: asset/expense are debit-normal, liability/equity/revenue credit-normal.
+// Only consulted for accounts explicitly opted into restrict_to_natural_side.
+func violatesNaturalSide(accountType string, debit, credit decimal.Decimal) bool {
+	switch accountType {
+	case "asset", "expense":
+		return credit.IsPositive()
+	case "liability", "equity", "revenue":
+		return debit.IsPositive()
+	default:
+		return false
+	}
 }

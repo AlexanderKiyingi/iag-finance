@@ -5,7 +5,9 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/shopspring/decimal"
 
+	"github.com/iag-finance/backend/internal/domain"
 	"github.com/iag-finance/backend/internal/repository"
 )
 
@@ -49,8 +51,20 @@ func (s *Service) ListTaxCodes(ctx context.Context) ([]repository.TaxCode, error
 }
 
 // UpsertTaxCode creates or updates a VAT/GST code.
-func (s *Service) UpsertTaxCode(ctx context.Context, code, name, rate string, active bool) error {
-	return s.repo.UpsertTaxCode(ctx, code, name, rate, active)
+func (s *Service) UpsertTaxCode(ctx context.Context, code, name, rate string, active, reverseCharge bool) error {
+	return s.repo.UpsertTaxCode(ctx, code, name, rate, active, reverseCharge)
+}
+
+// SelfAssessReverseCharge books the buyer's reverse-charge VAT self-assessment,
+// refusing a closed period.
+func (s *Service) SelfAssessReverseCharge(ctx context.Context, code, reference string, net decimal.Decimal, actor string) (*domain.JournalEntry, error) {
+	now := time.Now().UTC()
+	if err := s.guardOpen(ctx, now); err != nil {
+		return nil, err
+	}
+	return s.repo.SelfAssessReverseCharge(ctx, code, reference, net, now, &repository.AuditInfo{
+		Actor: actorOrSystem(actor), EventType: "finance.vat.reverse_charge", Message: "reverse-charge VAT " + reference,
+	})
 }
 
 // VATReturn aggregates output vs input VAT for a period.

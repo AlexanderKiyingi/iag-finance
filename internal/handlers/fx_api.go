@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"errors"
 	"net/http"
 	"strconv"
 	"strings"
@@ -10,6 +11,8 @@ import (
 	"github.com/shopspring/decimal"
 
 	"github.com/alvor-technologies/iag-platform-go/apierr"
+	"github.com/iag-finance/backend/internal/ledger"
+	"github.com/iag-finance/backend/internal/repository"
 )
 
 // ListExchangeRates returns the configured FX rates and the base currency.
@@ -81,10 +84,11 @@ func (a *API) ListTaxCodes(c *gin.Context) {
 }
 
 type upsertTaxCodeRequest struct {
-	Code   string `json:"code" binding:"required"`
-	Name   string `json:"name" binding:"required"`
-	Rate   string `json:"rate" binding:"required"`
-	Active *bool  `json:"active"`
+	Code          string `json:"code" binding:"required"`
+	Name          string `json:"name" binding:"required"`
+	Rate          string `json:"rate" binding:"required"`
+	Active        *bool  `json:"active"`
+	ReverseCharge bool   `json:"reverseCharge"`
 }
 
 // UpsertTaxCode creates or updates a VAT/GST code (rate as a fraction, e.g. 0.18).
@@ -103,11 +107,45 @@ func (a *API) UpsertTaxCode(c *gin.Context) {
 	if req.Active != nil {
 		active = *req.Active
 	}
-	if err := a.Ledger.UpsertTaxCode(c.Request.Context(), strings.ToUpper(req.Code), req.Name, rate.String(), active); err != nil {
+	if err := a.Ledger.UpsertTaxCode(c.Request.Context(), strings.ToUpper(req.Code), req.Name, rate.String(), active, req.ReverseCharge); err != nil {
 		apierr.JSONStatus(c, http.StatusInternalServerError, "could not save tax code")
 		return
 	}
 	c.JSON(http.StatusCreated, gin.H{"status": "saved"})
+}
+
+type reverseChargeRequest struct {
+	TaxCode   string `json:"taxCode" binding:"required"`
+	Reference string `json:"reference" binding:"required"`
+	NetAmount string `json:"netAmount" binding:"required"`
+}
+
+// SelfAssessReverseCharge books the buyer's reverse-charge VAT (Dr input / Cr
+// output) on a net purchase amount.
+func (a *API) SelfAssessReverseCharge(c *gin.Context) {
+	var req reverseChargeRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		apierr.JSONStatus(c, http.StatusBadRequest, err.Error())
+		return
+	}
+	net, err := decimal.NewFromString(strings.TrimSpace(req.NetAmount))
+	if err != nil || net.LessThanOrEqual(decimal.Zero) {
+		apierr.JSONStatus(c, http.StatusBadRequest, "netAmount must be a positive amount")
+		return
+	}
+	entry, err := a.Ledger.SelfAssessReverseCharge(c.Request.Context(), strings.ToUpper(strings.TrimSpace(req.TaxCode)), strings.TrimSpace(req.Reference), net, chainActor(c))
+	if err != nil {
+		status := http.StatusInternalServerError
+		switch {
+		case errors.Is(err, ledger.ErrPeriodClosed):
+			status = http.StatusUnprocessableEntity
+		case errors.Is(err, repository.ErrNotReverseCharge):
+			status = http.StatusBadRequest
+		}
+		apierr.JSONStatus(c, status, err.Error())
+		return
+	}
+	c.JSON(http.StatusCreated, entry)
 }
 
 // VATReturn reports output − input VAT for a period (?from=&to=).

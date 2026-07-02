@@ -130,6 +130,23 @@ var defaultAccounts = []struct {
 	{"5000", "Cost of Goods Sold", "expense"},
 	{"5100", "Operating Expenses", "expense"},
 	{"2100", "VAT Payable", "liability"},
+	// IFRS 9 — expected-credit-loss allowance & bad-debt accounts (migration 039).
+	{"1190", "Allowance for Doubtful Debts", "asset"},
+	{"5400", "Bad Debt Expense", "expense"},
+	{"4300", "Bad Debt Recovery", "revenue"},
+	// IFRS 15 — deferred & accrued revenue (migration 040).
+	{"2300", "Deferred Revenue", "liability"},
+	{"1200", "Accrued Revenue", "asset"},
+	// IAS 16 / IAS 36 — impairment & revaluation (migration 041).
+	{"5310", "Impairment Loss", "expense"},
+	{"3100", "Revaluation Surplus", "equity"},
+	// IAS 37 — provisions & decommissioning (migration 042).
+	{"2400", "Provisions", "liability"},
+	{"2410", "Decommissioning Provision", "liability"},
+	{"5500", "Provision Expense", "expense"},
+	{"5510", "Finance Cost - Unwinding of Discount", "expense"},
+	// Three-way match — purchase price variance (migration 043).
+	{"5150", "Purchase Price Variance", "expense"},
 }
 
 func (r *Repository) SeedChartOfAccounts(ctx context.Context) error {
@@ -148,7 +165,7 @@ func (r *Repository) SeedChartOfAccounts(ctx context.Context) error {
 
 func (r *Repository) ListChartOfAccounts(ctx context.Context) ([]domain.ChartAccount, error) {
 	rows, err := r.pool.Query(ctx, `
-		SELECT id, code, name, account_type, parent_id, currency, active, created_at, updated_at
+		SELECT id, code, name, account_type, parent_id, currency, active, restrict_to_natural_side, created_at, updated_at
 		FROM chart_of_accounts
 		WHERE active = TRUE
 		ORDER BY code
@@ -161,7 +178,7 @@ func (r *Repository) ListChartOfAccounts(ctx context.Context) ([]domain.ChartAcc
 	var items []domain.ChartAccount
 	for rows.Next() {
 		var a domain.ChartAccount
-		if err := rows.Scan(&a.ID, &a.Code, &a.Name, &a.AccountType, &a.ParentID, &a.Currency, &a.Active, &a.CreatedAt, &a.UpdatedAt); err != nil {
+		if err := rows.Scan(&a.ID, &a.Code, &a.Name, &a.AccountType, &a.ParentID, &a.Currency, &a.Active, &a.RestrictToNaturalSide, &a.CreatedAt, &a.UpdatedAt); err != nil {
 			return nil, err
 		}
 		items = append(items, a)
@@ -173,11 +190,11 @@ func (r *Repository) CreateChartAccount(ctx context.Context, code, name, account
 	row := r.pool.QueryRow(ctx, `
 		INSERT INTO chart_of_accounts (code, name, account_type, currency, parent_id)
 		VALUES ($1, $2, $3, $4, $5)
-		RETURNING id, code, name, account_type, parent_id, currency, active, created_at, updated_at
+		RETURNING id, code, name, account_type, parent_id, currency, active, restrict_to_natural_side, created_at, updated_at
 	`, code, name, accountType, currency, parentID)
 
 	var a domain.ChartAccount
-	if err := row.Scan(&a.ID, &a.Code, &a.Name, &a.AccountType, &a.ParentID, &a.Currency, &a.Active, &a.CreatedAt, &a.UpdatedAt); err != nil {
+	if err := row.Scan(&a.ID, &a.Code, &a.Name, &a.AccountType, &a.ParentID, &a.Currency, &a.Active, &a.RestrictToNaturalSide, &a.CreatedAt, &a.UpdatedAt); err != nil {
 		return nil, err
 	}
 	return &a, nil
@@ -188,7 +205,7 @@ func (r *Repository) CreateChartAccount(ctx context.Context, code, name, account
 // `code` is intentionally immutable — it is the human-facing identity and is
 // referenced by code elsewhere (e.g. budgets). Returns (nil, nil) when no row
 // with the id exists.
-func (r *Repository) UpdateChartAccount(ctx context.Context, id uuid.UUID, name, accountType, currency *string, parentID *uuid.UUID, active *bool) (*domain.ChartAccount, error) {
+func (r *Repository) UpdateChartAccount(ctx context.Context, id uuid.UUID, name, accountType, currency *string, parentID *uuid.UUID, active, restrictNaturalSide *bool) (*domain.ChartAccount, error) {
 	row := r.pool.QueryRow(ctx, `
 		UPDATE chart_of_accounts SET
 			name = COALESCE($2, name),
@@ -196,13 +213,14 @@ func (r *Repository) UpdateChartAccount(ctx context.Context, id uuid.UUID, name,
 			currency = COALESCE($4, currency),
 			parent_id = COALESCE($5, parent_id),
 			active = COALESCE($6, active),
+			restrict_to_natural_side = COALESCE($7, restrict_to_natural_side),
 			updated_at = NOW()
 		WHERE id = $1
-		RETURNING id, code, name, account_type, parent_id, currency, active, created_at, updated_at
-	`, id, name, accountType, currency, parentID, active)
+		RETURNING id, code, name, account_type, parent_id, currency, active, restrict_to_natural_side, created_at, updated_at
+	`, id, name, accountType, currency, parentID, active, restrictNaturalSide)
 
 	var a domain.ChartAccount
-	if err := row.Scan(&a.ID, &a.Code, &a.Name, &a.AccountType, &a.ParentID, &a.Currency, &a.Active, &a.CreatedAt, &a.UpdatedAt); err != nil {
+	if err := row.Scan(&a.ID, &a.Code, &a.Name, &a.AccountType, &a.ParentID, &a.Currency, &a.Active, &a.RestrictToNaturalSide, &a.CreatedAt, &a.UpdatedAt); err != nil {
 		if err == pgx.ErrNoRows {
 			return nil, nil
 		}
@@ -229,12 +247,12 @@ func (r *Repository) DeactivateChartAccount(ctx context.Context, id uuid.UUID) (
 
 func (r *Repository) GetAccountByCode(ctx context.Context, code string) (*domain.ChartAccount, error) {
 	row := r.pool.QueryRow(ctx, `
-		SELECT id, code, name, account_type, parent_id, currency, active, created_at, updated_at
+		SELECT id, code, name, account_type, parent_id, currency, active, restrict_to_natural_side, created_at, updated_at
 		FROM chart_of_accounts WHERE code = $1 AND active = TRUE
 	`, code)
 
 	var a domain.ChartAccount
-	if err := row.Scan(&a.ID, &a.Code, &a.Name, &a.AccountType, &a.ParentID, &a.Currency, &a.Active, &a.CreatedAt, &a.UpdatedAt); err != nil {
+	if err := row.Scan(&a.ID, &a.Code, &a.Name, &a.AccountType, &a.ParentID, &a.Currency, &a.Active, &a.RestrictToNaturalSide, &a.CreatedAt, &a.UpdatedAt); err != nil {
 		if err == pgx.ErrNoRows {
 			return nil, nil
 		}
@@ -305,7 +323,8 @@ func (r *Repository) ListJournalEntries(ctx context.Context, limit, offset int) 
 		limit = 50
 	}
 	rows, err := r.pool.Query(ctx, `
-		SELECT id, entry_number, description, status, source_event_id, source_service, correlation_id, posted_at, created_by, created_at, updated_at
+		SELECT id, entry_number, description, status, source_event_id, source_service, correlation_id,
+		       to_char(accounting_date,'YYYY-MM-DD'), reverses_entry_id, posted_at, created_by, created_at, updated_at
 		FROM journal_entries
 		ORDER BY created_at DESC
 		LIMIT $1 OFFSET $2
@@ -321,6 +340,7 @@ func (r *Repository) ListJournalEntries(ctx context.Context, limit, offset int) 
 		if err := rows.Scan(
 			&e.ID, &e.EntryNumber, &e.Description, &e.Status,
 			&e.SourceEventID, &e.SourceService, &e.CorrelationID,
+			&e.AccountingDate, &e.ReversesEntryID,
 			&e.PostedAt, &e.CreatedBy, &e.CreatedAt, &e.UpdatedAt,
 		); err != nil {
 			return nil, err
@@ -350,7 +370,8 @@ func (r *Repository) ListJournalEntries(ctx context.Context, limit, offset int) 
 
 func (r *Repository) GetJournalEntry(ctx context.Context, id uuid.UUID) (*domain.JournalEntry, error) {
 	row := r.pool.QueryRow(ctx, `
-		SELECT id, entry_number, description, status, source_event_id, source_service, correlation_id, posted_at, created_by, created_at, updated_at
+		SELECT id, entry_number, description, status, source_event_id, source_service, correlation_id,
+		       to_char(accounting_date,'YYYY-MM-DD'), reverses_entry_id, posted_at, created_by, created_at, updated_at
 		FROM journal_entries WHERE id = $1
 	`, id)
 
@@ -358,6 +379,7 @@ func (r *Repository) GetJournalEntry(ctx context.Context, id uuid.UUID) (*domain
 	if err := row.Scan(
 		&e.ID, &e.EntryNumber, &e.Description, &e.Status,
 		&e.SourceEventID, &e.SourceService, &e.CorrelationID,
+		&e.AccountingDate, &e.ReversesEntryID,
 		&e.PostedAt, &e.CreatedBy, &e.CreatedAt, &e.UpdatedAt,
 	); err != nil {
 		if err == pgx.ErrNoRows {
@@ -376,7 +398,8 @@ func (r *Repository) GetJournalEntry(ctx context.Context, id uuid.UUID) (*domain
 
 func (r *Repository) GetJournalEntryBySourceEvent(ctx context.Context, eventID string) (*domain.JournalEntry, error) {
 	row := r.pool.QueryRow(ctx, `
-		SELECT id, entry_number, description, status, source_event_id, source_service, correlation_id, posted_at, created_by, created_at, updated_at
+		SELECT id, entry_number, description, status, source_event_id, source_service, correlation_id,
+		       to_char(accounting_date,'YYYY-MM-DD'), reverses_entry_id, posted_at, created_by, created_at, updated_at
 		FROM journal_entries WHERE source_event_id = $1
 	`, eventID)
 
@@ -384,6 +407,7 @@ func (r *Repository) GetJournalEntryBySourceEvent(ctx context.Context, eventID s
 	if err := row.Scan(
 		&e.ID, &e.EntryNumber, &e.Description, &e.Status,
 		&e.SourceEventID, &e.SourceService, &e.CorrelationID,
+		&e.AccountingDate, &e.ReversesEntryID,
 		&e.PostedAt, &e.CreatedBy, &e.CreatedAt, &e.UpdatedAt,
 	); err != nil {
 		if err == pgx.ErrNoRows {

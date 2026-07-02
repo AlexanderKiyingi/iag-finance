@@ -25,8 +25,12 @@ type ChartAccount struct {
 	ParentID    *uuid.UUID `json:"parentId,omitempty"`
 	Currency    string     `json:"currency"`
 	Active      bool       `json:"active"`
-	CreatedAt   time.Time  `json:"createdAt"`
-	UpdatedAt   time.Time  `json:"updatedAt"`
+	// RestrictToNaturalSide, when true, rejects a posting to this account's
+	// non-natural side (asset/expense may only be debited; liability/equity/
+	// revenue may only be credited). Off by default.
+	RestrictToNaturalSide bool      `json:"restrictToNaturalSide"`
+	CreatedAt             time.Time `json:"createdAt"`
+	UpdatedAt             time.Time `json:"updatedAt"`
 }
 
 type JournalLine struct {
@@ -49,11 +53,16 @@ type JournalEntry struct {
 	SourceEventID  *string       `json:"sourceEventId,omitempty"`
 	SourceService  *string       `json:"sourceService,omitempty"`
 	CorrelationID  *string       `json:"correlationId,omitempty"`
-	PostedAt       *time.Time    `json:"postedAt,omitempty"`
-	CreatedBy      *uuid.UUID    `json:"createdBy,omitempty"`
-	CreatedAt      time.Time     `json:"createdAt"`
-	UpdatedAt      time.Time     `json:"updatedAt"`
-	Lines          []JournalLine `json:"lines,omitempty"`
+	// AccountingDate is the fiscal date the entry is booked to (period control),
+	// distinct from PostedAt (wall-clock). ReversesEntryID points to the original
+	// entry when this entry is a reversal.
+	AccountingDate  string        `json:"accountingDate,omitempty"`
+	ReversesEntryID *uuid.UUID    `json:"reversesEntryId,omitempty"`
+	PostedAt        *time.Time    `json:"postedAt,omitempty"`
+	CreatedBy       *uuid.UUID    `json:"createdBy,omitempty"`
+	CreatedAt       time.Time     `json:"createdAt"`
+	UpdatedAt       time.Time     `json:"updatedAt"`
+	Lines           []JournalLine `json:"lines,omitempty"`
 }
 
 type AROpenItem struct {

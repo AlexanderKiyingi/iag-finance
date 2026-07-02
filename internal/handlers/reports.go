@@ -188,12 +188,23 @@ func (a *API) CashFlow(c *gin.Context) {
 		apierr.JSONStatus(c, http.StatusInternalServerError, "could not resolve entity scope")
 		return
 	}
+	// ?method=indirect returns the IAS 7 indirect (net-income reconciliation)
+	// statement; the default remains the direct activity split.
+	if c.Query("method") == "indirect" {
+		report, err := a.Ledger.IndirectCashFlow(c.Request.Context(), dateParam(c, "from"), dateParam(c, "to"), scope)
+		if err != nil {
+			apierr.JSONStatus(c, http.StatusInternalServerError, "could not build cash flow")
+			return
+		}
+		c.JSON(http.StatusOK, gin.H{"method": "indirect", "report": report})
+		return
+	}
 	rows, err := a.Ledger.CashFlow(c.Request.Context(), dateParam(c, "from"), dateParam(c, "to"), scope)
 	if err != nil {
 		apierr.JSONStatus(c, http.StatusInternalServerError, "could not build cash flow")
 		return
 	}
-	c.JSON(http.StatusOK, gin.H{"rows": rows})
+	c.JSON(http.StatusOK, gin.H{"method": "direct", "rows": rows})
 }
 
 func (a *API) FinanceSummary(c *gin.Context) {

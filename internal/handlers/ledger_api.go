@@ -123,11 +123,12 @@ var validAccountTypes = map[string]bool{
 }
 
 type updateAccountRequest struct {
-	Name        *string `json:"name"`
-	AccountType *string `json:"accountType"`
-	Currency    *string `json:"currency"`
-	ParentID    *string `json:"parentId"`
-	Active      *bool   `json:"active"`
+	Name                  *string `json:"name"`
+	AccountType           *string `json:"accountType"`
+	Currency              *string `json:"currency"`
+	ParentID              *string `json:"parentId"`
+	Active                *bool   `json:"active"`
+	RestrictToNaturalSide *bool   `json:"restrictToNaturalSide"`
 }
 
 func (a *API) UpdateChartAccount(c *gin.Context) {
@@ -164,7 +165,7 @@ func (a *API) UpdateChartAccount(c *gin.Context) {
 		parentID = &pid
 	}
 
-	acct, err := a.Ledger.UpdateChartAccount(c.Request.Context(), id, req.Name, req.AccountType, req.Currency, parentID, req.Active)
+	acct, err := a.Ledger.UpdateChartAccount(c.Request.Context(), id, req.Name, req.AccountType, req.Currency, parentID, req.Active, req.RestrictToNaturalSide)
 	if err != nil {
 		apierr.JSONStatus(c, http.StatusConflict, "could not update account")
 		return

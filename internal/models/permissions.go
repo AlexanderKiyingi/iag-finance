@@ -34,6 +34,8 @@ func PermissionDescriptors() []PermissionDescriptor {
 		{Name: "finance.manage_dimensions", Description: "Manage projects and cost centres"},
 		{Name: "finance.issue_invoice", Description: "Create and issue customer invoices and recurring schedules"},
 		{Name: "finance.collect_payment", Description: "Create and confirm payment intents (collect on AR)"},
+		{Name: "finance.manage_provisions", Description: "Run ECL provisioning and write off / recover receivables"},
+		{Name: "finance.manage_revenue", Description: "Manage revenue-recognition schedules and run recognition"},
 
 		// Scoped read / cross-entity permissions.
 		{Name: "finance.view_consolidated", Description: "View consolidated (cross-entity) financial reports"},

@@ -86,6 +86,14 @@
       "description": "Create and confirm payment intents (collect on AR)"
     },
     {
+      "codename": "finance.manage_provisions",
+      "description": "Run ECL provisioning and write off / recover receivables"
+    },
+    {
+      "codename": "finance.manage_revenue",
+      "description": "Manage revenue-recognition schedules and run recognition"
+    },
+    {
       "codename": "finance.view_consolidated",
       "description": "View consolidated (cross-entity) financial reports"
     },
@@ -265,6 +273,30 @@
     },
     {
       "method": "POST",
+      "path": "/fixed-assets/impair",
+      "permissions": [
+        "finance.run_depreciation",
+        "finance.change_ledger"
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/fixed-assets/reverse-impairment",
+      "permissions": [
+        "finance.run_depreciation",
+        "finance.change_ledger"
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/fixed-assets/revalue",
+      "permissions": [
+        "finance.run_depreciation",
+        "finance.change_ledger"
+      ]
+    },
+    {
+      "method": "POST",
       "path": "/approvals",
       "permissions": [
         "finance.change_ledger",
@@ -306,6 +338,14 @@
     {
       "method": "POST",
       "path": "/tax-codes",
+      "permissions": [
+        "finance.manage_tax",
+        "finance.change_ledger"
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/tax/reverse-charge",
       "permissions": [
         "finance.manage_tax",
         "finance.change_ledger"
@@ -514,6 +554,126 @@
     {
       "method": "POST",
       "path": "/ap/items/:id/payments",
+      "permissions": [
+        "finance.change_ledger",
+        "finance.change_operations"
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/provisions/ecl-run",
+      "permissions": [
+        "finance.manage_provisions",
+        "finance.change_ledger"
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/provisions/write-off",
+      "permissions": [
+        "finance.manage_provisions",
+        "finance.change_ledger"
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/provisions/recover",
+      "permissions": [
+        "finance.manage_provisions",
+        "finance.change_ledger"
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/revenue/schedules",
+      "permissions": [
+        "finance.manage_revenue",
+        "finance.change_ledger"
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/revenue/recognition-run",
+      "permissions": [
+        "finance.manage_revenue",
+        "finance.change_ledger"
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/revenue/obligations/:id/satisfy",
+      "permissions": [
+        "finance.manage_revenue",
+        "finance.change_ledger"
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/revenue/accrue",
+      "permissions": [
+        "finance.manage_revenue",
+        "finance.change_ledger"
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/provisions/liability/recognize",
+      "permissions": [
+        "finance.manage_provisions",
+        "finance.change_ledger"
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/provisions/liability/unwind",
+      "permissions": [
+        "finance.manage_provisions",
+        "finance.change_ledger"
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/provisions/liability/utilize",
+      "permissions": [
+        "finance.manage_provisions",
+        "finance.change_ledger"
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/provisions/liability/remeasure",
+      "permissions": [
+        "finance.manage_provisions",
+        "finance.change_ledger"
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/provisions/liability/reverse",
+      "permissions": [
+        "finance.manage_provisions",
+        "finance.change_ledger"
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/procurement/match-check",
+      "permissions": [
+        "finance.change_ledger",
+        "finance.change_operations"
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/procurement/match-exceptions/:id/resolve",
+      "permissions": [
+        "finance.change_ledger",
+        "finance.change_operations"
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/procurement/match-variance/write-off",
       "permissions": [
         "finance.change_ledger",
         "finance.change_operations"
