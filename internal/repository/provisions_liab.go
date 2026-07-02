@@ -20,10 +20,10 @@ import (
 // it back to the expense.
 
 const (
-	provisionCode      = "2400"
-	decommissionCode   = "2410"
-	provisionExpense   = "5500"
-	unwindFinanceCost  = "5510"
+	provisionCode     = "2400"
+	decommissionCode  = "2410"
+	provisionExpense  = "5500"
+	unwindFinanceCost = "5510"
 )
 
 // ErrProvisionNotFound indicates the provision does not exist.

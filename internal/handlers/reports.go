@@ -103,7 +103,7 @@ func (a *API) BalanceSheet(c *gin.Context) {
 }
 
 type upsertBudgetRequest struct {
-	Period      string `json:"period" binding:"required"`      // YYYY-MM
+	Period      string `json:"period" binding:"required"` // YYYY-MM
 	AccountCode string `json:"accountCode" binding:"required"`
 	Amount      string `json:"amount" binding:"required"`
 }

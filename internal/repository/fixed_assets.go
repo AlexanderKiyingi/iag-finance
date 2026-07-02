@@ -172,10 +172,10 @@ func MarkFixedAssetDisposedTx(ctx context.Context, tx pgx.Tx, assetRef string) e
 
 // DepreciationRun summarises a period's posting.
 type DepreciationRun struct {
-	Period           string          `json:"period"`
-	AssetsDepreciated int            `json:"assetsDepreciated"`
-	TotalAmount      decimal.Decimal `json:"totalAmount"`
-	JournalEntryID   *uuid.UUID      `json:"journalEntryId,omitempty"`
+	Period            string          `json:"period"`
+	AssetsDepreciated int             `json:"assetsDepreciated"`
+	TotalAmount       decimal.Decimal `json:"totalAmount"`
+	JournalEntryID    *uuid.UUID      `json:"journalEntryId,omitempty"`
 }
 
 // RunDepreciation posts straight-line depreciation for the given 'YYYY-MM'
@@ -317,7 +317,7 @@ func (r *Repository) RunDepreciation(ctx context.Context, period string, postedA
 //   - (entry, true, nil)  booked (or the already-booked entry on redelivery)
 //   - (nil, true, nil)    asset already disposed → no-op
 //   - (nil, false, nil)   asset not in the subledger → caller falls back to the
-//                         hand-entered book value.
+//     hand-entered book value.
 func (r *Repository) BookAssetDisposalSubledger(ctx context.Context, eventID, eventType, source, correlationID, currency, assetRef, description string, proceeds decimal.Decimal, audit *AuditInfo) (*domain.JournalEntry, bool, error) {
 	if eventID != "" {
 		processed, err := r.IsEventProcessed(ctx, eventID)

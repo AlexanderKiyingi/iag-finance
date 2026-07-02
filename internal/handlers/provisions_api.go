@@ -8,9 +8,9 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/shopspring/decimal"
 
+	"github.com/alvor-technologies/iag-platform-go/apierr"
 	"github.com/iag-finance/backend/internal/ledger"
 	"github.com/iag-finance/backend/internal/repository"
-	"github.com/alvor-technologies/iag-platform-go/apierr"
 )
 
 // IFRS 9 provisioning endpoints. Grouped under /provisions to avoid a gin

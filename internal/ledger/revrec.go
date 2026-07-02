@@ -18,10 +18,10 @@ import (
 
 // RecognitionResult summarises a recognition run.
 type RecognitionResult struct {
-	Period    string          `json:"period"`
-	Amount    decimal.Decimal `json:"amount"`
-	Lines     int             `json:"lines"`
-	Entry     *domain.JournalEntry `json:"entry,omitempty"`
+	Period string               `json:"period"`
+	Amount decimal.Decimal      `json:"amount"`
+	Lines  int                  `json:"lines"`
+	Entry  *domain.JournalEntry `json:"entry,omitempty"`
 }
 
 // CreateRevenueSchedule defers recognised revenue and lays out its recognition

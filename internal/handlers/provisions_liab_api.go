@@ -10,9 +10,9 @@ import (
 	"github.com/google/uuid"
 	"github.com/shopspring/decimal"
 
+	"github.com/alvor-technologies/iag-platform-go/apierr"
 	"github.com/iag-finance/backend/internal/ledger"
 	"github.com/iag-finance/backend/internal/repository"
-	"github.com/alvor-technologies/iag-platform-go/apierr"
 )
 
 // IAS 37 provision endpoints (grouped under /provisions/liability, static paths

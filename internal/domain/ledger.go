@@ -46,13 +46,13 @@ type JournalLine struct {
 }
 
 type JournalEntry struct {
-	ID             uuid.UUID     `json:"id"`
-	EntryNumber    string        `json:"entryNumber"`
-	Description    string        `json:"description"`
-	Status         string        `json:"status"`
-	SourceEventID  *string       `json:"sourceEventId,omitempty"`
-	SourceService  *string       `json:"sourceService,omitempty"`
-	CorrelationID  *string       `json:"correlationId,omitempty"`
+	ID            uuid.UUID `json:"id"`
+	EntryNumber   string    `json:"entryNumber"`
+	Description   string    `json:"description"`
+	Status        string    `json:"status"`
+	SourceEventID *string   `json:"sourceEventId,omitempty"`
+	SourceService *string   `json:"sourceService,omitempty"`
+	CorrelationID *string   `json:"correlationId,omitempty"`
 	// AccountingDate is the fiscal date the entry is booked to (period control),
 	// distinct from PostedAt (wall-clock). ReversesEntryID points to the original
 	// entry when this entry is a reversal.
