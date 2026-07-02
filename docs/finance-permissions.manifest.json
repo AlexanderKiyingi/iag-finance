@@ -94,6 +94,10 @@
       "description": "Manage revenue-recognition schedules and run recognition"
     },
     {
+      "codename": "finance.manage_prepayments",
+      "description": "Manage prepaid-expense schedules and run amortization"
+    },
+    {
       "codename": "finance.view_consolidated",
       "description": "View consolidated (cross-entity) financial reports"
     },
@@ -612,6 +616,22 @@
       "path": "/revenue/accrue",
       "permissions": [
         "finance.manage_revenue",
+        "finance.change_ledger"
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/prepayments",
+      "permissions": [
+        "finance.manage_prepayments",
+        "finance.change_ledger"
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/prepayments/amortization-run",
+      "permissions": [
+        "finance.manage_prepayments",
         "finance.change_ledger"
       ]
     },

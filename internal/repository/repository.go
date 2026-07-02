@@ -138,6 +138,8 @@ var defaultAccounts = []struct {
 	// IFRS 15 — deferred & accrued revenue (migration 040).
 	{"2300", "Deferred Revenue", "liability", false},
 	{"1200", "Accrued Revenue", "asset", false},
+	// IAS 1 matching — prepaid-expense amortization (migration 052).
+	{"1250", "Prepaid Expenses", "asset", false},
 	// IAS 16 / IAS 36 — impairment & revaluation (migration 041).
 	{"5310", "Impairment Loss", "expense", false},
 	{"3100", "Revaluation Surplus", "equity", false},

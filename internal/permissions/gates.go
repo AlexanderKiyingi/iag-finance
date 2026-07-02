@@ -112,6 +112,10 @@ func RouteGates() []RouteGate {
 		{"POST", "/revenue/obligations/:id/satisfy", granular("finance.manage_revenue")},
 		{"POST", "/revenue/accrue", granular("finance.manage_revenue")},
 
+		// IAS 1 matching — prepaid-expense amortization
+		{"POST", "/prepayments", granular("finance.manage_prepayments")},
+		{"POST", "/prepayments/amortization-run", granular("finance.manage_prepayments")},
+
 		// IAS 37 provisions
 		{"POST", "/provisions/liability/recognize", granular("finance.manage_provisions")},
 		{"POST", "/provisions/liability/unwind", granular("finance.manage_provisions")},

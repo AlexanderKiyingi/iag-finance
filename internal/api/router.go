@@ -222,6 +222,10 @@ func NewRouter(deps RouterDeps) *gin.Engine {
 		w.POST("/revenue/recognition-run", api.RunRevenueRecognition)
 		w.POST("/revenue/obligations/:id/satisfy", api.SatisfyObligation)
 		w.POST("/revenue/accrue", api.AccrueRevenue)
+		// IAS 1 matching — prepaid-expense amortization (expense-side mirror of IFRS 15).
+		v1.GET("/prepayments", ledgerRead, api.ListPrepayments)
+		w.POST("/prepayments", api.CreatePrepayment)
+		w.POST("/prepayments/amortization-run", api.RunAmortization)
 		// IAS 37 — provisions & decommissioning.
 		v1.GET("/provisions/liability", ledgerRead, api.ListProvisions)
 		w.POST("/provisions/liability/recognize", api.RecognizeProvision)
