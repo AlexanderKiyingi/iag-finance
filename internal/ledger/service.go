@@ -210,6 +210,10 @@ func (s *Service) ListVendors(ctx context.Context) ([]repository.Party, error) {
 	return s.repo.ListVendors(ctx)
 }
 
+func (s *Service) CustomerEmailByRef(ctx context.Context, ref string) (string, error) {
+	return s.repo.CustomerEmailByRef(ctx, ref)
+}
+
 func (s *Service) SalesByItem(ctx context.Context, from, to *time.Time, entityIDs []uuid.UUID) ([]repository.SalesByItemRow, error) {
 	return s.repo.SalesByItem(ctx, from, to, entityIDs)
 }

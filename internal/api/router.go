@@ -199,6 +199,7 @@ func NewRouter(deps RouterDeps) *gin.Engine {
 		v1.GET("/ar/items/:id/payments", ledgerRead, api.ListARPayments)
 		v1.GET("/ar/items/:id/payment-link", ledgerRead, api.PaymentLink)
 		v1.GET("/ar/invoices/:documentRef/pdf", ledgerRead, api.InvoicePDF)
+		w.POST("/ar/invoices/:documentRef/email", api.EmailInvoice)
 		v1.GET("/ar/customers/:customerRef/statement", ledgerRead, api.CustomerStatement)
 		w.POST("/ar/credit-notes", api.CreateARCreditNote)
 		w.POST("/ar/debit-notes", api.CreateARDebitNote)

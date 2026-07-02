@@ -465,6 +465,14 @@
     },
     {
       "method": "POST",
+      "path": "/ar/invoices/:documentRef/email",
+      "permissions": [
+        "finance.issue_invoice",
+        "finance.change_ledger"
+      ]
+    },
+    {
+      "method": "POST",
       "path": "/ar/credit-notes",
       "permissions": [
         "finance.change_ledger",

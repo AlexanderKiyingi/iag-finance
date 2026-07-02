@@ -61,6 +61,22 @@ func (r *Repository) CreateCustomer(ctx context.Context, code, name, email, phon
 func (r *Repository) ListCustomers(ctx context.Context) ([]Party, error) {
 	return r.listParties(ctx, "customers")
 }
+// CustomerEmailByRef resolves a customer's email from an AR document's
+// customer_ref, which may be either the customer code or name. Returns "" when
+// no matching customer has an email on file.
+func (r *Repository) CustomerEmailByRef(ctx context.Context, ref string) (string, error) {
+	var email string
+	err := r.pool.QueryRow(ctx,
+		`SELECT COALESCE(email, '') FROM customers
+		 WHERE entity_id = $1 AND (code = $2 OR name = $2) AND COALESCE(email, '') <> ''
+		 ORDER BY (code = $2) DESC LIMIT 1`,
+		EntityFromContext(ctx), ref).Scan(&email)
+	if err != nil {
+		return "", nil // no match (including no-rows) → no email, not an error
+	}
+	return email, nil
+}
+
 func (r *Repository) CreateVendor(ctx context.Context, code, name, email, phone, currency string) (*Party, error) {
 	return r.createParty(ctx, "vendors", code, name, email, phone, currency)
 }

@@ -87,6 +87,45 @@ func (a *API) InvoicePDF(c *gin.Context) {
 	c.Data(http.StatusOK, "application/pdf", body)
 }
 
+type emailInvoiceRequest struct {
+	Email string `json:"email"`
+}
+
+// EmailInvoice publishes an "invoice-ready-email" notification for an issued AR
+// invoice. Recipient is the request body's email if given, else the customer's
+// stored email (party master). Sending is handled by the notifications service
+// off the iag.notifications topic; 202 means queued, not delivered.
+func (a *API) EmailInvoice(c *gin.Context) {
+	docRef := strings.TrimSpace(c.Param("documentRef"))
+	item, err := a.Ledger.GetARByDocumentRef(c.Request.Context(), docRef)
+	if err != nil || item == nil {
+		apierr.JSONStatus(c, http.StatusNotFound, "invoice not found")
+		return
+	}
+
+	var req emailInvoiceRequest
+	_ = c.ShouldBindJSON(&req)
+	recipient := strings.TrimSpace(req.Email)
+	if recipient == "" {
+		recipient, _ = a.Ledger.CustomerEmailByRef(c.Request.Context(), item.CustomerRef)
+	}
+	if recipient == "" {
+		apierr.JSONStatus(c, http.StatusUnprocessableEntity, "no recipient email — pass one or set the customer's email")
+		return
+	}
+	if a.Events == nil || !a.Events.NotificationsEnabled() {
+		apierr.JSONStatus(c, http.StatusServiceUnavailable, "email delivery is not configured")
+		return
+	}
+
+	a.Events.PublishNotification(c.Request.Context(), recipient, "invoice-ready-email", map[string]string{
+		"documentRef": item.DocumentRef,
+		"amount":      item.Amount,
+		"currency":    item.Currency,
+	})
+	c.JSON(http.StatusAccepted, gin.H{"status": "queued", "recipient": recipient, "documentRef": item.DocumentRef})
+}
+
 func (a *API) PaymentLink(c *gin.Context) {
 	id, err := uuid.Parse(c.Param("id"))
 	if err != nil {

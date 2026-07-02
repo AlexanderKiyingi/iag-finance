@@ -89,6 +89,7 @@ func RouteGates() []RouteGate {
 		// AR / AP
 		{"POST", "/ar/items", ledgerWrite()},
 		{"POST", "/ar/items/:id/payments", ledgerWrite()},
+		{"POST", "/ar/invoices/:documentRef/email", granular("finance.issue_invoice")},
 		{"POST", "/ar/credit-notes", ledgerWrite()},
 		{"POST", "/ar/debit-notes", ledgerWrite()},
 		{"POST", "/ap/credit-notes", ledgerWrite()},
