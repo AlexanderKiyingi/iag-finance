@@ -210,6 +210,13 @@ func (s *Service) ListVendors(ctx context.Context) ([]repository.Party, error) {
 	return s.repo.ListVendors(ctx)
 }
 
+func (s *Service) SalesByItem(ctx context.Context, from, to *time.Time, entityIDs []uuid.UUID) ([]repository.SalesByItemRow, error) {
+	return s.repo.SalesByItem(ctx, from, to, entityIDs)
+}
+func (s *Service) StatementOfChangesInEquity(ctx context.Context, from, to *time.Time, entityIDs []uuid.UUID) ([]repository.EquityChangeRow, error) {
+	return s.repo.StatementOfChangesInEquity(ctx, from, to, entityIDs)
+}
+
 // Entities lists configured accounting entities.
 func (s *Service) Entities(ctx context.Context) ([]repository.Entity, error) {
 	return s.repo.ListEntities(ctx)

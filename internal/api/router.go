@@ -152,6 +152,8 @@ func NewRouter(deps RouterDeps) *gin.Engine {
 		w.POST("/budgets", api.UpsertBudget)
 		v1.GET("/reports/budget-vs-actual", ledgerRead, api.BudgetVsActual)
 		v1.GET("/reports/cash-flow", ledgerRead, api.CashFlow)
+		v1.GET("/reports/sales-by-item", ledgerRead, api.SalesByItem)
+		v1.GET("/reports/changes-in-equity", ledgerRead, api.ChangesInEquity)
 		v1.GET("/reports/control-reconciliation", ledgerRead, api.ControlReconciliation)
 		v1.GET("/billing/invoices", ledgerRead, api.ListBillingInvoices)
 		w.POST("/billing/invoices", api.CreateInvoice)

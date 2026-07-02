@@ -154,6 +154,34 @@ func (a *API) ControlReconciliation(c *gin.Context) {
 }
 
 // CashFlow reports cash movement by activity category over ?from=&to=.
+func (a *API) SalesByItem(c *gin.Context) {
+	scope, err := a.entityScope(c)
+	if err != nil {
+		apierr.JSONStatus(c, http.StatusBadRequest, err.Error())
+		return
+	}
+	rows, err := a.Ledger.SalesByItem(c.Request.Context(), dateParam(c, "from"), dateParam(c, "to"), scope)
+	if err != nil {
+		apierr.JSONStatus(c, http.StatusInternalServerError, "could not build sales-by-item report")
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"rows": rows})
+}
+
+func (a *API) ChangesInEquity(c *gin.Context) {
+	scope, err := a.entityScope(c)
+	if err != nil {
+		apierr.JSONStatus(c, http.StatusBadRequest, err.Error())
+		return
+	}
+	rows, err := a.Ledger.StatementOfChangesInEquity(c.Request.Context(), dateParam(c, "from"), dateParam(c, "to"), scope)
+	if err != nil {
+		apierr.JSONStatus(c, http.StatusInternalServerError, "could not build statement of changes in equity")
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"rows": rows})
+}
+
 func (a *API) CashFlow(c *gin.Context) {
 	scope, err := a.entityScope(c)
 	if err != nil {
