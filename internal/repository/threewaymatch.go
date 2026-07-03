@@ -57,24 +57,27 @@ func (r *Repository) MatchTolerance(ctx context.Context) decimal.Decimal {
 // of open exceptions after the pass.
 func (r *Repository) DetectMatchExceptions(ctx context.Context) (int, error) {
 	tolerance := r.MatchTolerance(ctx)
-	rows, err := r.pool.Query(ctx, `SELECT po_ref, accrued::text, cleared::text FROM grni_accruals`)
+	rows, err := r.pool.Query(ctx, `SELECT po_ref, accrued::text, cleared::text, qty_received::text, qty_invoiced::text FROM grni_accruals`)
 	if err != nil {
 		return 0, err
 	}
 	type acc struct {
 		po               string
 		accrued, cleared decimal.Decimal
+		qtyRecv, qtyInv  decimal.Decimal
 	}
 	var accs []acc
 	for rows.Next() {
 		var a acc
-		var ac, cl string
-		if err := rows.Scan(&a.po, &ac, &cl); err != nil {
+		var ac, cl, qr, qi string
+		if err := rows.Scan(&a.po, &ac, &cl, &qr, &qi); err != nil {
 			rows.Close()
 			return 0, err
 		}
 		a.accrued, _ = decimal.NewFromString(ac)
 		a.cleared, _ = decimal.NewFromString(cl)
+		a.qtyRecv, _ = decimal.NewFromString(qr)
+		a.qtyInv, _ = decimal.NewFromString(qi)
 		accs = append(accs, a)
 	}
 	rows.Close()
@@ -93,8 +96,10 @@ func (r *Repository) DetectMatchExceptions(ctx context.Context) (int, error) {
 				return 0, err
 			}
 		case a.accrued.IsPositive() && a.cleared.IsPositive():
+			// Value (price) variance on the net GR/IR residual.
 			limit := a.accrued.Mul(tolerance).Abs()
-			if open.Abs().GreaterThan(limit) {
+			valVariance := open.Abs().GreaterThan(limit)
+			if valVariance {
 				status = "variance"
 				typ := "price_variance"
 				if open.IsNegative() {
@@ -105,12 +110,28 @@ func (r *Repository) DetectMatchExceptions(ctx context.Context) (int, error) {
 						a.accrued.String(), a.cleared.String(), open.String(), limit.String())); err != nil {
 					return 0, err
 				}
-			} else {
+			}
+			// Quantity variance (received vs invoiced), when both carry quantities.
+			qtyVariance := false
+			if a.qtyRecv.IsPositive() && a.qtyInv.IsPositive() {
+				qtyLimit := a.qtyRecv.Mul(tolerance).Abs()
+				qtyDelta := a.qtyRecv.Sub(a.qtyInv)
+				if qtyDelta.Abs().GreaterThan(qtyLimit) {
+					qtyVariance = true
+					status = "variance"
+					if err := r.upsertMatchException(ctx, a.po, "qty_variance",
+						fmt.Sprintf("received %s vs invoiced %s (delta %s, tolerance %s)",
+							a.qtyRecv.String(), a.qtyInv.String(), qtyDelta.String(), qtyLimit.String())); err != nil {
+						return 0, err
+					}
+				}
+			}
+			if !valVariance && !qtyVariance {
 				status = "matched"
-				// Within tolerance — auto-resolve any prior variance exceptions.
+				// Both value and quantity within tolerance — auto-resolve priors.
 				if _, err := r.pool.Exec(ctx, `
 					UPDATE match_exceptions SET status='resolved', resolved_at=NOW(), resolved_by='system:match'
-					WHERE po_ref=$1 AND status='open' AND type IN ('price_variance','over_invoice','orphan_invoice')
+					WHERE po_ref=$1 AND status='open' AND type IN ('price_variance','over_invoice','orphan_invoice','qty_variance')
 				`, a.po); err != nil {
 					return 0, err
 				}

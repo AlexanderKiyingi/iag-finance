@@ -18,6 +18,10 @@ type RecurringInvoice struct {
 	Template    json.RawMessage `json:"template"`
 	Notes       string          `json:"notes"`
 	Active      bool            `json:"active"`
+	// Optional IFRS 15 recognition inherited by each generated invoice: 'ratable'
+	// spreads that invoice's revenue over RecognitionPeriods months from its issue.
+	RecognitionMethod  string `json:"recognitionMethod,omitempty"`
+	RecognitionPeriods int    `json:"recognitionPeriods,omitempty"`
 }
 
 type CreateRecurringInput struct {
@@ -27,6 +31,9 @@ type CreateRecurringInput struct {
 	NextRun     time.Time
 	Template    json.RawMessage
 	Notes       string
+	// Optional IFRS 15 recognition (see RecurringInvoice).
+	RecognitionMethod  string
+	RecognitionPeriods int
 }
 
 func (r *Repository) CreateRecurringInvoice(ctx context.Context, in CreateRecurringInput) (*RecurringInvoice, error) {
@@ -36,11 +43,11 @@ func (r *Repository) CreateRecurringInvoice(ctx context.Context, in CreateRecurr
 	}
 	var ri RecurringInvoice
 	err := r.pool.QueryRow(ctx, `
-		INSERT INTO recurring_invoices (entity_id, customer_ref, currency, cadence, next_run, template, notes)
-		VALUES ($1, $2, $3, $4, $5, $6, $7)
-		RETURNING id, entity_id, customer_ref, currency, cadence, next_run, template, notes, active
-	`, EntityFromContext(ctx), in.CustomerRef, currency, in.Cadence, in.NextRun, in.Template, in.Notes).Scan(
-		&ri.ID, &ri.EntityID, &ri.CustomerRef, &ri.Currency, &ri.Cadence, &ri.NextRun, &ri.Template, &ri.Notes, &ri.Active)
+		INSERT INTO recurring_invoices (entity_id, customer_ref, currency, cadence, next_run, template, notes, recognition_method, recognition_periods)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+		RETURNING id, entity_id, customer_ref, currency, cadence, next_run, template, notes, active, recognition_method, recognition_periods
+	`, EntityFromContext(ctx), in.CustomerRef, currency, in.Cadence, in.NextRun, in.Template, in.Notes, in.RecognitionMethod, in.RecognitionPeriods).Scan(
+		&ri.ID, &ri.EntityID, &ri.CustomerRef, &ri.Currency, &ri.Cadence, &ri.NextRun, &ri.Template, &ri.Notes, &ri.Active, &ri.RecognitionMethod, &ri.RecognitionPeriods)
 	if err != nil {
 		return nil, err
 	}
@@ -49,7 +56,7 @@ func (r *Repository) CreateRecurringInvoice(ctx context.Context, in CreateRecurr
 
 func (r *Repository) ListRecurringInvoices(ctx context.Context) ([]RecurringInvoice, error) {
 	rows, err := r.pool.Query(ctx, `
-		SELECT id, entity_id, customer_ref, currency, cadence, next_run, template, notes, active
+		SELECT id, entity_id, customer_ref, currency, cadence, next_run, template, notes, active, recognition_method, recognition_periods
 		FROM recurring_invoices WHERE entity_id = $1 ORDER BY created_at DESC
 	`, EntityFromContext(ctx))
 	if err != nil {
@@ -63,7 +70,7 @@ func (r *Repository) ListRecurringInvoices(ctx context.Context) ([]RecurringInvo
 // (the worker runs globally and sets each invoice's entity from the schedule).
 func (r *Repository) ListDueRecurring(ctx context.Context, asOf time.Time) ([]RecurringInvoice, error) {
 	rows, err := r.pool.Query(ctx, `
-		SELECT id, entity_id, customer_ref, currency, cadence, next_run, template, notes, active
+		SELECT id, entity_id, customer_ref, currency, cadence, next_run, template, notes, active, recognition_method, recognition_periods
 		FROM recurring_invoices WHERE active AND next_run <= $1 ORDER BY next_run
 	`, asOf)
 	if err != nil {
@@ -81,7 +88,7 @@ func scanRecurring(rows interface {
 	var out []RecurringInvoice
 	for rows.Next() {
 		var ri RecurringInvoice
-		if err := rows.Scan(&ri.ID, &ri.EntityID, &ri.CustomerRef, &ri.Currency, &ri.Cadence, &ri.NextRun, &ri.Template, &ri.Notes, &ri.Active); err != nil {
+		if err := rows.Scan(&ri.ID, &ri.EntityID, &ri.CustomerRef, &ri.Currency, &ri.Cadence, &ri.NextRun, &ri.Template, &ri.Notes, &ri.Active, &ri.RecognitionMethod, &ri.RecognitionPeriods); err != nil {
 			return nil, err
 		}
 		out = append(out, ri)

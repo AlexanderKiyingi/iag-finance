@@ -21,19 +21,25 @@ type InvoiceLine struct {
 }
 
 type Invoice struct {
-	ID          uuid.UUID     `json:"id"`
-	Number      string        `json:"number"`
-	CustomerRef string        `json:"customerRef"`
-	Currency    string        `json:"currency"`
-	IssueDate   *time.Time    `json:"issueDate,omitempty"`
-	DueDate     *time.Time    `json:"dueDate,omitempty"`
-	Status      string        `json:"status"`
-	Subtotal    string        `json:"subtotal"`
-	TaxTotal    string        `json:"taxTotal"`
-	Total       string        `json:"total"`
-	Notes       string        `json:"notes"`
-	DocumentRef *string       `json:"documentRef,omitempty"`
-	Lines       []InvoiceLine `json:"lines,omitempty"`
+	ID          uuid.UUID  `json:"id"`
+	Number      string     `json:"number"`
+	CustomerRef string     `json:"customerRef"`
+	Currency    string     `json:"currency"`
+	IssueDate   *time.Time `json:"issueDate,omitempty"`
+	DueDate     *time.Time `json:"dueDate,omitempty"`
+	Status      string     `json:"status"`
+	Subtotal    string     `json:"subtotal"`
+	TaxTotal    string     `json:"taxTotal"`
+	Total       string     `json:"total"`
+	Notes       string     `json:"notes"`
+	DocumentRef *string    `json:"documentRef,omitempty"`
+	// Optional IFRS 15 recognition spec: when RecognitionMethod is 'ratable',
+	// issuing defers the subtotal and spreads it over RecognitionPeriods months
+	// from RecognitionStart ('YYYY-MM', defaulting to the issue month).
+	RecognitionMethod  string        `json:"recognitionMethod,omitempty"`
+	RecognitionPeriods int           `json:"recognitionPeriods,omitempty"`
+	RecognitionStart   string        `json:"recognitionStart,omitempty"`
+	Lines              []InvoiceLine `json:"lines,omitempty"`
 }
 
 type InvoiceLineInput struct {
@@ -48,7 +54,11 @@ type CreateInvoiceInput struct {
 	Currency    string
 	DueDate     *time.Time
 	Notes       string
-	Lines       []InvoiceLineInput
+	// Optional IFRS 15 recognition spec (see Invoice).
+	RecognitionMethod  string
+	RecognitionPeriods int
+	RecognitionStart   string
+	Lines              []InvoiceLineInput
 }
 
 // CreateInvoice builds a draft invoice: each line total is qty × unit price, its
@@ -97,11 +107,13 @@ func (r *Repository) CreateInvoice(ctx context.Context, in CreateInvoiceInput) (
 
 	var id uuid.UUID
 	if err := tx.QueryRow(ctx, `
-		INSERT INTO invoices (entity_id, number, customer_ref, currency, due_date, status, subtotal, tax_total, total, notes)
-		VALUES ($1, $2, $3, $4, $5, 'draft', $6, $7, $8, $9)
+		INSERT INTO invoices (entity_id, number, customer_ref, currency, due_date, status, subtotal, tax_total, total, notes,
+		                      recognition_method, recognition_periods, recognition_start)
+		VALUES ($1, $2, $3, $4, $5, 'draft', $6, $7, $8, $9, $10, $11, $12)
 		RETURNING id
 	`, EntityFromContext(ctx), number, in.CustomerRef, currency, in.DueDate,
-		subtotal, taxTotal, total, in.Notes).Scan(&id); err != nil {
+		subtotal, taxTotal, total, in.Notes,
+		in.RecognitionMethod, in.RecognitionPeriods, in.RecognitionStart).Scan(&id); err != nil {
 		return nil, err
 	}
 	for i, l := range lines {
@@ -122,10 +134,12 @@ func (r *Repository) GetInvoice(ctx context.Context, id uuid.UUID) (*Invoice, er
 	var inv Invoice
 	err := r.pool.QueryRow(ctx, `
 		SELECT id, number, customer_ref, currency, issue_date, due_date, status,
-		       subtotal::text, tax_total::text, total::text, notes, document_ref
+		       subtotal::text, tax_total::text, total::text, notes, document_ref,
+		       recognition_method, recognition_periods, recognition_start
 		FROM invoices WHERE id = $1
 	`, id).Scan(&inv.ID, &inv.Number, &inv.CustomerRef, &inv.Currency, &inv.IssueDate, &inv.DueDate,
-		&inv.Status, &inv.Subtotal, &inv.TaxTotal, &inv.Total, &inv.Notes, &inv.DocumentRef)
+		&inv.Status, &inv.Subtotal, &inv.TaxTotal, &inv.Total, &inv.Notes, &inv.DocumentRef,
+		&inv.RecognitionMethod, &inv.RecognitionPeriods, &inv.RecognitionStart)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, nil
@@ -156,7 +170,8 @@ func (r *Repository) ListInvoices(ctx context.Context, limit, offset int) ([]Inv
 	}
 	rows, err := r.pool.Query(ctx, `
 		SELECT id, number, customer_ref, currency, issue_date, due_date, status,
-		       subtotal::text, tax_total::text, total::text, notes, document_ref
+		       subtotal::text, tax_total::text, total::text, notes, document_ref,
+		       recognition_method, recognition_periods, recognition_start
 		FROM invoices WHERE entity_id = $1 ORDER BY created_at DESC LIMIT $2 OFFSET $3
 	`, EntityFromContext(ctx), limit, offset)
 	if err != nil {
@@ -167,7 +182,8 @@ func (r *Repository) ListInvoices(ctx context.Context, limit, offset int) ([]Inv
 	for rows.Next() {
 		var inv Invoice
 		if err := rows.Scan(&inv.ID, &inv.Number, &inv.CustomerRef, &inv.Currency, &inv.IssueDate, &inv.DueDate,
-			&inv.Status, &inv.Subtotal, &inv.TaxTotal, &inv.Total, &inv.Notes, &inv.DocumentRef); err != nil {
+			&inv.Status, &inv.Subtotal, &inv.TaxTotal, &inv.Total, &inv.Notes, &inv.DocumentRef,
+			&inv.RecognitionMethod, &inv.RecognitionPeriods, &inv.RecognitionStart); err != nil {
 			return nil, err
 		}
 		out = append(out, inv)

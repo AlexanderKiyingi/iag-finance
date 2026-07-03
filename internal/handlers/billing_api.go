@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -17,17 +18,22 @@ import (
 
 type invoiceLineRequest struct {
 	Description string `json:"description"`
-	Quantity   string `json:"quantity"`
-	UnitPrice  string `json:"unitPrice" binding:"required"`
-	TaxCode    string `json:"taxCode"`
+	Quantity    string `json:"quantity"`
+	UnitPrice   string `json:"unitPrice" binding:"required"`
+	TaxCode     string `json:"taxCode"`
 }
 
 type createInvoiceRequest struct {
-	CustomerRef string               `json:"customerRef" binding:"required"`
-	Currency    string               `json:"currency"`
-	DueDate     string               `json:"dueDate"`
-	Notes       string               `json:"notes"`
-	Lines       []invoiceLineRequest `json:"lines" binding:"required,min=1"`
+	CustomerRef string `json:"customerRef" binding:"required"`
+	Currency    string `json:"currency"`
+	DueDate     string `json:"dueDate"`
+	Notes       string `json:"notes"`
+	// Optional IFRS 15 recognition: method 'ratable' spreads the subtotal over
+	// recognitionPeriods months from recognitionStart ('YYYY-MM').
+	RecognitionMethod  string               `json:"recognitionMethod"`
+	RecognitionPeriods int                  `json:"recognitionPeriods"`
+	RecognitionStart   string               `json:"recognitionStart"`
+	Lines              []invoiceLineRequest `json:"lines" binding:"required,min=1"`
 }
 
 // CreateInvoice builds a draft invoice with line items + tax (entity from header).
@@ -67,7 +73,9 @@ func (a *API) CreateInvoice(c *gin.Context) {
 		})
 	}
 	inv, err := a.Ledger.CreateInvoice(c.Request.Context(), repository.CreateInvoiceInput{
-		CustomerRef: req.CustomerRef, Currency: req.Currency, DueDate: due, Notes: req.Notes, Lines: lines,
+		CustomerRef: req.CustomerRef, Currency: req.Currency, DueDate: due, Notes: req.Notes,
+		RecognitionMethod: strings.TrimSpace(req.RecognitionMethod), RecognitionPeriods: req.RecognitionPeriods,
+		RecognitionStart: strings.TrimSpace(req.RecognitionStart), Lines: lines,
 	})
 	if err != nil {
 		apierr.JSONStatus(c, http.StatusConflict, "could not create invoice")
@@ -105,12 +113,15 @@ func (a *API) GetBillingInvoice(c *gin.Context) {
 }
 
 type createRecurringRequest struct {
-	CustomerRef string               `json:"customerRef" binding:"required"`
-	Currency    string               `json:"currency"`
-	Cadence     string               `json:"cadence" binding:"required"` // weekly|monthly
-	NextRun     string               `json:"nextRun" binding:"required"` // YYYY-MM-DD
-	Notes       string               `json:"notes"`
-	Lines       []invoiceLineRequest `json:"lines" binding:"required,min=1"`
+	CustomerRef string `json:"customerRef" binding:"required"`
+	Currency    string `json:"currency"`
+	Cadence     string `json:"cadence" binding:"required"` // weekly|monthly
+	NextRun     string `json:"nextRun" binding:"required"` // YYYY-MM-DD
+	Notes       string `json:"notes"`
+	// Optional IFRS 15 recognition inherited by each generated invoice.
+	RecognitionMethod  string               `json:"recognitionMethod"`
+	RecognitionPeriods int                  `json:"recognitionPeriods"`
+	Lines              []invoiceLineRequest `json:"lines" binding:"required,min=1"`
 }
 
 // CreateRecurringInvoice schedules a recurring invoice; a worker generates and
@@ -134,6 +145,7 @@ func (a *API) CreateRecurringInvoice(c *gin.Context) {
 	ri, err := a.Ledger.CreateRecurringInvoice(c.Request.Context(), repository.CreateRecurringInput{
 		CustomerRef: req.CustomerRef, Currency: req.Currency, Cadence: req.Cadence,
 		NextRun: next, Template: template, Notes: req.Notes,
+		RecognitionMethod: strings.TrimSpace(req.RecognitionMethod), RecognitionPeriods: req.RecognitionPeriods,
 	})
 	if err != nil {
 		apierr.JSONStatus(c, http.StatusConflict, "could not create recurring invoice")

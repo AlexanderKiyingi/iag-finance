@@ -88,5 +88,28 @@ func (s *Service) IssueInvoice(ctx context.Context, id uuid.UUID, actor string) 
 	if err := s.repo.MarkInvoiceIssued(ctx, id, inv.Number, now); err != nil {
 		return nil, err
 	}
+
+	// IFRS 15: when the invoice carries a ratable recognition spec, defer the
+	// subtotal and spread it over the schedule (Dr 4000 / Cr 2300 now, then a
+	// monthly Dr 2300 / Cr 4000 recognition run). Idempotent on the invoice
+	// number, so a re-issue never double-defers.
+	if inv.RecognitionMethod == "ratable" && inv.RecognitionPeriods >= 1 && subtotal.IsPositive() {
+		start := inv.RecognitionStart
+		if start == "" {
+			start = now.Format("2006-01")
+		}
+		if _, err := s.repo.CreateSchedule(ctx, repository.CreateScheduleInput{
+			SourceRef:   inv.Number,
+			Total:       subtotal,
+			Currency:    inv.Currency,
+			Method:      "ratable",
+			StartPeriod: start,
+			Periods:     inv.RecognitionPeriods,
+		}, now, &repository.AuditInfo{
+			Actor: actorOrSystem(actor), EventType: "finance.revenue.defer", Message: "defer invoice " + inv.Number,
+		}); err != nil && !errors.Is(err, repository.ErrScheduleExists) {
+			return nil, err
+		}
+	}
 	return s.repo.GetInvoice(ctx, id)
 }

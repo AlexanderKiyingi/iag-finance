@@ -41,9 +41,9 @@ func (w *RecurringInvoicer) Run(ctx context.Context) {
 
 type recurringTemplateLine struct {
 	Description string `json:"description"`
-	Quantity   string `json:"quantity"`
-	UnitPrice  string `json:"unitPrice"`
-	TaxCode    string `json:"taxCode"`
+	Quantity    string `json:"quantity"`
+	UnitPrice   string `json:"unitPrice"`
+	TaxCode     string `json:"taxCode"`
 }
 
 func (w *RecurringInvoicer) generate(ctx context.Context) {
@@ -75,6 +75,9 @@ func (w *RecurringInvoicer) generate(ctx context.Context) {
 
 		inv, err := w.ledger.CreateInvoice(ectx, repository.CreateInvoiceInput{
 			CustomerRef: s.CustomerRef, Currency: s.Currency, Notes: s.Notes, Lines: lines,
+			// Each generated invoice inherits the schedule's recognition and spreads
+			// from its own issue month (empty start → IssueInvoice defaults it).
+			RecognitionMethod: s.RecognitionMethod, RecognitionPeriods: s.RecognitionPeriods,
 		})
 		if err != nil {
 			slog.Error("recurring: create invoice failed", "schedule", s.ID, "err", err)

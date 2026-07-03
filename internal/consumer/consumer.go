@@ -103,6 +103,8 @@ type invoicePostedData struct {
 	// the AP is the net, and net × rate is booked as offsetting input/output VAT.
 	ReverseCharge bool   `json:"reverseCharge"`
 	TaxCode       string `json:"taxCode"`
+	// Quantity, when present, is the invoiced quantity for three-way qty matching.
+	Quantity string `json:"quantity"`
 }
 
 type fleetFuelRecordedData struct {
@@ -164,7 +166,7 @@ func (h *financeHandler) handleInvoicePosted(ctx context.Context, env platformev
 	// event carries it. poRef "" + vat 0 reduces to the prior Dr 5000 / Cr 2000.
 	entry, err := h.ledger.BookAPInvoice(ctx, env.ID, env.Type, env.Source, env.CorrelationID, desc,
 		data.Currency, strings.TrimSpace(data.PoRef), amount, parseAmount(data.VatAmount),
-		data.ReverseCharge, strings.TrimSpace(data.TaxCode))
+		data.ReverseCharge, strings.TrimSpace(data.TaxCode), parseAmount(strings.TrimSpace(data.Quantity)))
 	if err == nil {
 		h.logBooked(ctx, env, entry)
 		h.linkOpenItem(ctx, env.Type, data.DocumentRef, entry, env.ID)

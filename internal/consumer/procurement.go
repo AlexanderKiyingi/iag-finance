@@ -64,7 +64,12 @@ func (h *procurementHandler) handleGRNPosted(ctx context.Context, env platformev
 	if strings.TrimSpace(currency) == "" {
 		currency = "UGX"
 	}
-	if _, err := h.ledger.BookGRNAccrual(ctx, env.ID, env.Type, env.Source, env.CorrelationID, currency, poRef, value); err != nil {
+	// Optional received quantity for three-way qty matching (absent on older emitters).
+	qty := decimal.Zero
+	if q, ok := data["quantity"].(string); ok {
+		qty = parseAmount(strings.TrimSpace(q))
+	}
+	if _, err := h.ledger.BookGRNAccrual(ctx, env.ID, env.Type, env.Source, env.CorrelationID, currency, poRef, value, qty); err != nil {
 		return err
 	}
 	slog.Info("finance GR/IR accrual from GRN", "poRef", poRef, "amount", amountStr)
@@ -110,7 +115,7 @@ func (h *procurementHandler) handlePaymentAuthorized(ctx context.Context, env pl
 
 // invoicePostedOutbox builds the invoice.posted outbox event for the consumer,
 // or nil when publishing is disabled. Written atomically with the AP item.
-func (h *procurementHandler) invoicePostedOutbox(documentRef, vendorRef, amount, currency, poRef, vatAmount, taxCode string, reverseCharge bool) *repository.OutboxEvent {
+func (h *procurementHandler) invoicePostedOutbox(documentRef, vendorRef, amount, currency, poRef, vatAmount, taxCode, quantity string, reverseCharge bool) *repository.OutboxEvent {
 	if h.bus == nil || !h.bus.Enabled() {
 		return nil
 	}
@@ -124,6 +129,10 @@ func (h *procurementHandler) invoicePostedOutbox(documentRef, vendorRef, amount,
 	}
 	if vatAmount != "" {
 		payload["vatAmount"] = vatAmount
+	}
+	// Carry the invoiced quantity for three-way qty matching.
+	if quantity != "" {
+		payload["quantity"] = quantity
 	}
 	// Carry reverse-charge intent so the GL handler self-assesses VAT on the net.
 	if reverseCharge {
@@ -175,8 +184,10 @@ func (h *procurementHandler) handleInvoiceReceived(ctx context.Context, env plat
 	taxCode, _ := data["taxCode"].(string)
 	taxCode = strings.TrimSpace(taxCode)
 	reverseCharge, _ := data["reverseCharge"].(bool)
+	quantity, _ := data["quantity"].(string)
+	quantity = strings.TrimSpace(quantity)
 	// invoice.posted is enqueued to the outbox in the same tx as the AP item.
-	outbox := h.invoicePostedOutbox(documentRef, vendorRef, amount, currency, poRef, vatAmount, taxCode, reverseCharge)
+	outbox := h.invoicePostedOutbox(documentRef, vendorRef, amount, currency, poRef, vatAmount, taxCode, quantity, reverseCharge)
 	item, err := h.ledger.CreateAPItem(ctx, vendorRef, documentRef, desc, amount, currency, due, outbox)
 	if err != nil {
 		if repository.IsUniqueViolation(err) {

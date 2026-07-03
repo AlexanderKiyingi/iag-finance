@@ -25,7 +25,7 @@ const (
 // invoice can clear it. No-op without a PO reference (the accrual could never be
 // cleared) or a positive value. Idempotent on eventID via the shared booking
 // primitive; the accrual bump runs as a side-effect in the same transaction.
-func (s *Service) BookGRNAccrual(ctx context.Context, eventID, eventType, source, correlationID, currency, poRef string, value decimal.Decimal) (*domain.JournalEntry, error) {
+func (s *Service) BookGRNAccrual(ctx context.Context, eventID, eventType, source, correlationID, currency, poRef string, value, qtyReceived decimal.Decimal) (*domain.JournalEntry, error) {
 	if poRef == "" || value.LessThanOrEqual(decimal.Zero) {
 		return nil, nil
 	}
@@ -46,7 +46,7 @@ func (s *Service) BookGRNAccrual(ctx context.Context, eventID, eventType, source
 		return nil, ErrPeriodClosed
 	}
 	side := func(ctx context.Context, tx pgx.Tx, _ uuid.UUID) error {
-		return repository.AddGRNIAccrualTx(ctx, tx, poRef, currency, value)
+		return repository.AddGRNIAccrualTx(ctx, tx, poRef, currency, value, qtyReceived)
 	}
 	return s.repo.BookPostedEntry(ctx, repository.CreateJournalParams{
 		Description:   "Goods received accrual — PO " + poRef,
@@ -81,7 +81,7 @@ func (s *Service) BookGRNAccrual(ctx context.Context, eventID, eventType, source
 // recoverable input VAT and payable output VAT for net × the taxCode's rate — a
 // net-zero cash effect added to the same entry, so the reverse-charge VAT is
 // recognised exactly once alongside the AP booking.
-func (s *Service) BookAPInvoice(ctx context.Context, eventID, eventType, source, correlationID, description, currency, poRef string, gross, vat decimal.Decimal, reverseCharge bool, taxCode string) (*domain.JournalEntry, error) {
+func (s *Service) BookAPInvoice(ctx context.Context, eventID, eventType, source, correlationID, description, currency, poRef string, gross, vat decimal.Decimal, reverseCharge bool, taxCode string, qtyInvoiced decimal.Decimal) (*domain.JournalEntry, error) {
 	if gross.LessThanOrEqual(decimal.Zero) {
 		return nil, ErrEmptyEntry
 	}
@@ -142,8 +142,9 @@ func (s *Service) BookAPInvoice(ctx context.Context, eventID, eventType, source,
 	var side repository.BookSideEffect
 	if netToGRIR {
 		cleared := net
+		qty := qtyInvoiced
 		side = func(ctx context.Context, tx pgx.Tx, _ uuid.UUID) error {
-			return repository.ClearGRNIAccrualTx(ctx, tx, poRef, currency, cleared)
+			return repository.ClearGRNIAccrualTx(ctx, tx, poRef, currency, cleared, qty)
 		}
 	}
 	return s.repo.BookPostedEntry(ctx, repository.CreateJournalParams{
