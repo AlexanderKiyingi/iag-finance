@@ -132,6 +132,11 @@ func (s *Service) ApplyARPayment(ctx context.Context, itemID uuid.UUID, amount d
 	} else if currency != item.Currency {
 		return nil, nil, ErrCurrencyMismatch
 	}
+	// Carry the settled document's ref on the outbox so downstream consumers
+	// (e.g. procurement's payment writeback) can correlate to their own record.
+	if outbox != nil && outbox.Payload != nil {
+		outbox.Payload["documentRef"] = item.DocumentRef
+	}
 	// Settle the AR-clearing leg at the document rate and the cash leg at the
 	// current rate; the base residual is realized FX gain/loss.
 	docRate, payRate, err := s.settlementRates(ctx, "ar", itemID, currency)
@@ -175,6 +180,12 @@ func (s *Service) ApplyAPPayment(ctx context.Context, itemID uuid.UUID, amount d
 		currency = item.Currency
 	} else if currency != item.Currency {
 		return nil, nil, ErrCurrencyMismatch
+	}
+	// Carry the settled document's ref (the procurement invoice id for a
+	// procurement-sourced AP item) so procurement's writeback consumer can
+	// correlate the settlement to its invoice + PO.
+	if outbox != nil && outbox.Payload != nil {
+		outbox.Payload["documentRef"] = item.DocumentRef
 	}
 	docRate, payRate, err := s.settlementRates(ctx, "ap", itemID, currency)
 	if err != nil {
