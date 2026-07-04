@@ -4,6 +4,8 @@
 
 This is **not** end-user login accounts (see [`iag-authentication`](../authentication/) and future [`iag-accounts`](../accounts/)).
 
+Recent changes: [`CHANGELOG.md`](CHANGELOG.md). Gap status: [`docs/GAP_REMEDIATION_ROADMAP.md`](docs/GAP_REMEDIATION_ROADMAP.md).
+
 **Stack:** Go 1.23, Gin, PostgreSQL, Redis (optional), Kafka  
 **Port (dev):** 3006  
 **Database:** `finance` schema on `iag_platform`
