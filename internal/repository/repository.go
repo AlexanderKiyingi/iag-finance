@@ -90,6 +90,9 @@ type CreateJournalParams struct {
 	Currency       string          // transaction currency of the lines (zero → base)
 	FXRate         decimal.Decimal // currency→base rate (zero → 1)
 	Lines          []ResolvedLine
+	// CounterpartyEntityID tags the entry as intercompany (the other entity in the
+	// transaction) for consolidation elimination; nil for ordinary entries.
+	CounterpartyEntityID *uuid.UUID
 }
 
 // lineCurrency returns the params' transaction currency, defaulting to base.
@@ -151,6 +154,10 @@ var defaultAccounts = []struct {
 	{"2600", "Income Tax Payable", "liability", false},
 	{"2610", "Deferred Tax Liability", "liability", false},
 	{"5700", "Income Tax Expense", "expense", false},
+	// IFRS 10 — consolidation (migration 055).
+	{"1800", "Investment in Subsidiary", "asset", false},
+	{"1900", "Goodwill", "asset", false},
+	{"3200", "Non-Controlling Interest", "equity", false},
 	// IAS 16 / IAS 36 — impairment & revaluation (migration 041).
 	{"5310", "Impairment Loss", "expense", false},
 	{"3100", "Revaluation Surplus", "equity", false},
@@ -299,10 +306,10 @@ func (r *Repository) CreateJournalEntry(ctx context.Context, p CreateJournalPara
 	var entry domain.JournalEntry
 	err = tx.QueryRow(ctx, `
 		INSERT INTO journal_entries (
-			entry_number, description, status, source_event_id, source_service, correlation_id, created_by, accounting_date, entity_id
-		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+			entry_number, description, status, source_event_id, source_service, correlation_id, created_by, accounting_date, entity_id, counterparty_entity_id
+		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
 		RETURNING id, entry_number, description, status, source_event_id, source_service, correlation_id, posted_at, created_by, created_at, updated_at
-	`, p.EntryNumber, p.Description, p.Status, p.SourceEventID, p.SourceService, p.CorrelationID, p.CreatedBy, resolveAccountingDate(p.AccountingDate, time.Now().UTC()), EntityFromContext(ctx)).Scan(
+	`, p.EntryNumber, p.Description, p.Status, p.SourceEventID, p.SourceService, p.CorrelationID, p.CreatedBy, resolveAccountingDate(p.AccountingDate, time.Now().UTC()), EntityFromContext(ctx), p.CounterpartyEntityID).Scan(
 		&entry.ID, &entry.EntryNumber, &entry.Description, &entry.Status,
 		&entry.SourceEventID, &entry.SourceService, &entry.CorrelationID,
 		&entry.PostedAt, &entry.CreatedBy, &entry.CreatedAt, &entry.UpdatedAt,

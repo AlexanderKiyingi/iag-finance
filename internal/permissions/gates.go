@@ -67,6 +67,7 @@ func RouteGates() []RouteGate {
 		{"POST", "/tax-codes", granular("finance.manage_tax")},
 		{"POST", "/tax/reverse-charge", granular("finance.manage_tax")},
 		{"POST", "/entities", granular("finance.manage_entities")},
+		{"PATCH", "/entities/:id/ownership", granular("finance.manage_entities")},
 		{"POST", "/budgets", granular("finance.manage_budgets")},
 		{"POST", "/projects", granular("finance.manage_dimensions")},
 		{"POST", "/cost-centers", granular("finance.manage_dimensions")},

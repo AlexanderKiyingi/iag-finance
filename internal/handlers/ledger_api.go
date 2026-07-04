@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"regexp"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -242,6 +243,8 @@ type journalLineRequest struct {
 type createJournalRequest struct {
 	Description string               `json:"description" binding:"required"`
 	Lines       []journalLineRequest `json:"lines" binding:"required,min=2"`
+	// CounterpartyEntityID tags the entry as intercompany for consolidation.
+	CounterpartyEntityID string `json:"counterpartyEntityId"`
 }
 
 func (a *API) CreateJournalEntry(c *gin.Context) {
@@ -260,10 +263,20 @@ func (a *API) CreateJournalEntry(c *gin.Context) {
 		id := raw.(uuid.UUID)
 		createdBy = &id
 	}
+	var counterparty *uuid.UUID
+	if s := strings.TrimSpace(req.CounterpartyEntityID); s != "" {
+		id, err := uuid.Parse(s)
+		if err != nil {
+			apierr.JSONStatus(c, http.StatusBadRequest, "counterpartyEntityId must be a UUID")
+			return
+		}
+		counterparty = &id
+	}
 	entry, err := a.Ledger.CreateJournalEntry(c.Request.Context(), ledger.CreateEntryInput{
-		Description: req.Description,
-		Lines:       lines,
-		CreatedBy:   createdBy,
+		Description:          req.Description,
+		Lines:                lines,
+		CreatedBy:            createdBy,
+		CounterpartyEntityID: counterparty,
 	})
 	if err != nil {
 		status := http.StatusBadRequest

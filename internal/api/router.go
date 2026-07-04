@@ -154,6 +154,9 @@ func NewRouter(deps RouterDeps) *gin.Engine {
 		v1.GET("/reports/vat-return", ledgerRead, api.VATReturn)
 		v1.GET("/entities", ledgerRead, api.ListEntities)
 		w.POST("/entities", api.CreateEntity)
+		w.PATCH("/entities/:id/ownership", api.SetEntityOwnership)
+		// IFRS 10 — consolidation eliminations (intra-group + investment/equity).
+		v1.GET("/consolidation/eliminations", ledgerRead, api.ConsolidationEliminations)
 		w.POST("/budgets", api.UpsertBudget)
 		v1.GET("/reports/budget-vs-actual", ledgerRead, api.BudgetVsActual)
 		v1.GET("/reports/cash-flow", ledgerRead, api.CashFlow)

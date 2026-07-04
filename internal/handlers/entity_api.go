@@ -27,6 +27,9 @@ type createEntityRequest struct {
 	Name         string `json:"name" binding:"required"`
 	BaseCurrency string `json:"baseCurrency"`
 	ParentID     string `json:"parentId"`
+	// OwnershipPct is the parent's ownership fraction of this entity (0<pct<=1,
+	// default 1.0). Drives consolidation elimination + NCI.
+	OwnershipPct string `json:"ownershipPct"`
 }
 
 // CreateEntity registers a new accounting entity (optionally under a parent for
@@ -46,10 +49,38 @@ func (a *API) CreateEntity(c *gin.Context) {
 		}
 		parent = &id
 	}
-	e, err := a.Ledger.CreateEntity(c.Request.Context(), strings.ToUpper(req.Code), req.Name, strings.ToUpper(req.BaseCurrency), parent)
+	e, err := a.Ledger.CreateEntity(c.Request.Context(), strings.ToUpper(req.Code), req.Name, strings.ToUpper(req.BaseCurrency), parent, strings.TrimSpace(req.OwnershipPct))
 	if err != nil {
 		apierr.JSONStatus(c, http.StatusConflict, "could not create entity")
 		return
 	}
 	c.JSON(http.StatusCreated, e)
+}
+
+type setOwnershipRequest struct {
+	OwnershipPct string `json:"ownershipPct" binding:"required"` // 0 < pct <= 1
+}
+
+// SetEntityOwnership updates the parent's ownership fraction of an entity.
+func (a *API) SetEntityOwnership(c *gin.Context) {
+	id, err := uuid.Parse(c.Param("id"))
+	if err != nil {
+		apierr.JSONStatus(c, http.StatusBadRequest, "invalid entity id")
+		return
+	}
+	var req setOwnershipRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		apierr.JSONStatus(c, http.StatusBadRequest, err.Error())
+		return
+	}
+	e, err := a.Ledger.SetEntityOwnership(c.Request.Context(), id, strings.TrimSpace(req.OwnershipPct))
+	if err != nil {
+		apierr.JSONStatus(c, http.StatusInternalServerError, "could not update ownership")
+		return
+	}
+	if e == nil {
+		apierr.JSONStatus(c, http.StatusNotFound, "entity not found")
+		return
+	}
+	c.JSON(http.StatusOK, e)
 }

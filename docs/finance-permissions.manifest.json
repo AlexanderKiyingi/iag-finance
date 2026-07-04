@@ -368,6 +368,14 @@
       ]
     },
     {
+      "method": "PATCH",
+      "path": "/entities/:id/ownership",
+      "permissions": [
+        "finance.manage_entities",
+        "finance.change_ledger"
+      ]
+    },
+    {
       "method": "POST",
       "path": "/budgets",
       "permissions": [

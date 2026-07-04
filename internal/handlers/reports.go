@@ -9,6 +9,7 @@ import (
 
 	"github.com/alvor-technologies/iag-platform-go/apierr"
 	"github.com/iag-finance/backend/internal/middleware"
+	"github.com/iag-finance/backend/internal/repository"
 )
 
 // entityScope resolves the entity ids a report should cover from the request:
@@ -75,10 +76,25 @@ func (a *API) ProfitAndLoss(c *gin.Context) {
 		apierr.JSONStatus(c, http.StatusInternalServerError, "could not resolve entity scope")
 		return
 	}
-	rows, err := a.Ledger.ProfitAndLoss(c.Request.Context(), dateParam(c, "from"), dateParam(c, "to"), scope)
+	from, to := dateParam(c, "from"), dateParam(c, "to")
+	rows, err := a.Ledger.ProfitAndLoss(c.Request.Context(), from, to, scope)
 	if err != nil {
 		apierr.JSONStatus(c, http.StatusInternalServerError, "could not build P&L")
 		return
+	}
+	// Consolidated: append intra-group revenue/expense eliminations so the totals
+	// reflect only third-party trading.
+	if len(scope) > 1 {
+		elims, err := a.Ledger.TransactionalEliminations(c.Request.Context(), from, to, scope)
+		if err != nil {
+			apierr.JSONStatus(c, http.StatusInternalServerError, "could not build eliminations")
+			return
+		}
+		for _, e := range elims {
+			if e.AccountType == "revenue" || e.AccountType == "expense" {
+				rows = append(rows, repository.PLRow{AccountCode: e.AccountCode, AccountName: e.AccountName, AccountType: e.AccountType, Amount: e.Amount})
+			}
+		}
 	}
 	c.JSON(http.StatusOK, gin.H{"rows": rows})
 }
@@ -99,7 +115,33 @@ func (a *API) BalanceSheet(c *gin.Context) {
 		apierr.JSONStatus(c, http.StatusInternalServerError, "could not build balance sheet")
 		return
 	}
-	c.JSON(http.StatusOK, gin.H{"rows": rows})
+	// Consolidated: append intra-group balance eliminations (IC receivables/
+	// payables) and the investment/equity + NCI + goodwill adjustments so the
+	// statement reflects the group, not the sum of separate entities.
+	nci, goodwill := "0.00", "0.00"
+	if len(scope) > 1 {
+		summary, err := a.Ledger.ConsolidationEliminations(c.Request.Context(), asOf, scope)
+		if err != nil {
+			apierr.JSONStatus(c, http.StatusInternalServerError, "could not build eliminations")
+			return
+		}
+		appendBS := func(e repository.EliminationRow) {
+			rows = append(rows, repository.BalanceSheetSection{AccountType: e.AccountType, AccountCode: e.AccountCode, AccountName: e.AccountName, Balance: e.Amount})
+		}
+		for _, e := range summary.Transactional {
+			// Revenue/expense eliminations belong to the P&L; their net balance-
+			// sheet effect already cancels in the aggregated earnings for matched
+			// intercompany trades, so only the balance items apply here.
+			if e.AccountType == "asset" || e.AccountType == "liability" || e.AccountType == "equity" {
+				appendBS(e)
+			}
+		}
+		for _, e := range summary.Structural {
+			appendBS(e)
+		}
+		nci, goodwill = summary.NCI, summary.Goodwill
+	}
+	c.JSON(http.StatusOK, gin.H{"rows": rows, "nci": nci, "goodwill": goodwill})
 }
 
 type upsertBudgetRequest struct {

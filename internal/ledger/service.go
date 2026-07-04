@@ -38,13 +38,14 @@ type LineInput struct {
 }
 
 type CreateEntryInput struct {
-	Description    string
-	Lines          []LineInput
-	SourceEventID  *string
-	SourceService  *string
-	CorrelationID  *string
-	CreatedBy      *uuid.UUID
-	AccountingDate *time.Time
+	Description          string
+	Lines                []LineInput
+	SourceEventID        *string
+	SourceService        *string
+	CorrelationID        *string
+	CreatedBy            *uuid.UUID
+	AccountingDate       *time.Time
+	CounterpartyEntityID *uuid.UUID
 }
 
 type Service struct {
@@ -233,8 +234,14 @@ func (s *Service) Entities(ctx context.Context) ([]repository.Entity, error) {
 }
 
 // CreateEntity registers a new accounting entity.
-func (s *Service) CreateEntity(ctx context.Context, code, name, baseCurrency string, parentID *uuid.UUID) (*repository.Entity, error) {
-	return s.repo.CreateEntity(ctx, code, name, baseCurrency, parentID)
+func (s *Service) CreateEntity(ctx context.Context, code, name, baseCurrency string, parentID *uuid.UUID, ownershipPct string) (*repository.Entity, error) {
+	return s.repo.CreateEntity(ctx, code, name, baseCurrency, parentID, ownershipPct)
+}
+
+// SetEntityOwnership updates the parent's ownership fraction of an entity (for
+// consolidation elimination + NCI sizing).
+func (s *Service) SetEntityOwnership(ctx context.Context, id uuid.UUID, ownershipPct string) (*repository.Entity, error) {
+	return s.repo.SetEntityOwnership(ctx, id, ownershipPct)
 }
 
 func (s *Service) FinanceSummary(ctx context.Context) (repository.FinanceSummary, error) {
@@ -274,15 +281,16 @@ func (s *Service) CreateJournalEntry(ctx context.Context, in CreateEntryInput) (
 		accDate = in.AccountingDate.UTC()
 	}
 	return s.repo.CreateJournalEntry(ctx, repository.CreateJournalParams{
-		EntryNumber:    entryNumber,
-		Description:    in.Description,
-		Status:         "draft",
-		SourceEventID:  in.SourceEventID,
-		SourceService:  in.SourceService,
-		CorrelationID:  in.CorrelationID,
-		CreatedBy:      in.CreatedBy,
-		AccountingDate: accDate,
-		Lines:          resolved,
+		EntryNumber:          entryNumber,
+		Description:          in.Description,
+		Status:               "draft",
+		SourceEventID:        in.SourceEventID,
+		SourceService:        in.SourceService,
+		CorrelationID:        in.CorrelationID,
+		CreatedBy:            in.CreatedBy,
+		AccountingDate:       accDate,
+		Lines:                resolved,
+		CounterpartyEntityID: in.CounterpartyEntityID,
 	})
 }
 

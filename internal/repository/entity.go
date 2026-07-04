@@ -37,11 +37,14 @@ type Entity struct {
 	BaseCurrency string     `json:"baseCurrency"`
 	ParentID     *uuid.UUID `json:"parentId,omitempty"`
 	Active       bool       `json:"active"`
+	// OwnershipPct is the parent's ownership fraction of this entity (1.0 = wholly
+	// owned), used by consolidation to size the elimination and NCI.
+	OwnershipPct string `json:"ownershipPct"`
 }
 
 func (r *Repository) ListEntities(ctx context.Context) ([]Entity, error) {
 	rows, err := r.pool.Query(ctx, `
-		SELECT id, code, name, base_currency, parent_id, active FROM entities ORDER BY code
+		SELECT id, code, name, base_currency, parent_id, active, ownership_pct::text FROM entities ORDER BY code
 	`)
 	if err != nil {
 		return nil, err
@@ -50,7 +53,7 @@ func (r *Repository) ListEntities(ctx context.Context) ([]Entity, error) {
 	var out []Entity
 	for rows.Next() {
 		var e Entity
-		if err := rows.Scan(&e.ID, &e.Code, &e.Name, &e.BaseCurrency, &e.ParentID, &e.Active); err != nil {
+		if err := rows.Scan(&e.ID, &e.Code, &e.Name, &e.BaseCurrency, &e.ParentID, &e.Active, &e.OwnershipPct); err != nil {
 			return nil, err
 		}
 		out = append(out, e)
@@ -58,17 +61,36 @@ func (r *Repository) ListEntities(ctx context.Context) ([]Entity, error) {
 	return out, rows.Err()
 }
 
-func (r *Repository) CreateEntity(ctx context.Context, code, name, baseCurrency string, parentID *uuid.UUID) (*Entity, error) {
+func (r *Repository) CreateEntity(ctx context.Context, code, name, baseCurrency string, parentID *uuid.UUID, ownershipPct string) (*Entity, error) {
 	if baseCurrency == "" {
 		baseCurrency = r.baseCurrency
 	}
+	if ownershipPct == "" {
+		ownershipPct = "1.0"
+	}
 	var e Entity
 	err := r.pool.QueryRow(ctx, `
-		INSERT INTO entities (code, name, base_currency, parent_id)
-		VALUES ($1, $2, $3, $4)
-		RETURNING id, code, name, base_currency, parent_id, active
-	`, code, name, baseCurrency, parentID).Scan(&e.ID, &e.Code, &e.Name, &e.BaseCurrency, &e.ParentID, &e.Active)
+		INSERT INTO entities (code, name, base_currency, parent_id, ownership_pct)
+		VALUES ($1, $2, $3, $4, $5::numeric)
+		RETURNING id, code, name, base_currency, parent_id, active, ownership_pct::text
+	`, code, name, baseCurrency, parentID, ownershipPct).Scan(&e.ID, &e.Code, &e.Name, &e.BaseCurrency, &e.ParentID, &e.Active, &e.OwnershipPct)
 	if err != nil {
+		return nil, err
+	}
+	return &e, nil
+}
+
+// SetEntityOwnership updates the parent's ownership fraction of an entity.
+func (r *Repository) SetEntityOwnership(ctx context.Context, id uuid.UUID, ownershipPct string) (*Entity, error) {
+	var e Entity
+	err := r.pool.QueryRow(ctx, `
+		UPDATE entities SET ownership_pct = $2::numeric WHERE id = $1
+		RETURNING id, code, name, base_currency, parent_id, active, ownership_pct::text
+	`, id, ownershipPct).Scan(&e.ID, &e.Code, &e.Name, &e.BaseCurrency, &e.ParentID, &e.Active, &e.OwnershipPct)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, nil
+		}
 		return nil, err
 	}
 	return &e, nil
@@ -77,8 +99,8 @@ func (r *Repository) CreateEntity(ctx context.Context, code, name, baseCurrency 
 func (r *Repository) GetEntityByCode(ctx context.Context, code string) (*Entity, error) {
 	var e Entity
 	err := r.pool.QueryRow(ctx, `
-		SELECT id, code, name, base_currency, parent_id, active FROM entities WHERE code = $1
-	`, code).Scan(&e.ID, &e.Code, &e.Name, &e.BaseCurrency, &e.ParentID, &e.Active)
+		SELECT id, code, name, base_currency, parent_id, active, ownership_pct::text FROM entities WHERE code = $1
+	`, code).Scan(&e.ID, &e.Code, &e.Name, &e.BaseCurrency, &e.ParentID, &e.Active, &e.OwnershipPct)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, nil
