@@ -241,6 +241,19 @@ func main() {
 		}
 		consumers = append(consumers, c6)
 
+		// Septenary: iag.payments — payments.settled → book the disbursement
+		// (Dr inventory/expense, Cr cash). Closes the operational money-out loop.
+		c7, err := consumer.New(consumer.Config{
+			Brokers:  cfg.KafkaBrokers,
+			GroupID:  "iag.finance.payments",
+			Topic:    cfg.KafkaPaymentsTopic,
+			DLQTopic: cfg.KafkaDLQTopic,
+		}, ledgerSvc, auditSvc, dlqProducer)
+		if err != nil {
+			log.Fatal("finance payments consumer: ", err)
+		}
+		consumers = append(consumers, c7)
+
 		for _, c := range consumers {
 			c := c
 			go func() {

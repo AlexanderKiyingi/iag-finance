@@ -127,6 +127,7 @@ var defaultAccounts = []struct {
 	IsCash      bool
 }{
 	{"1000", "Cash", "asset", true},
+	{"1050", "Payments Clearing", "asset", false},
 	{"1100", "Accounts Receivable", "asset", false},
 	{"2000", "Accounts Payable", "liability", false},
 	{"3000", "Retained Earnings", "equity", false},

@@ -74,6 +74,8 @@ func (h *financeHandler) Handle(ctx context.Context, env platformevents.Envelope
 		return h.handleInvoicePosted(ctx, env)
 	case "fleet.fuel.recorded":
 		return h.handleFleetFuelRecorded(ctx, env)
+	case "payments.settled":
+		return h.handlePaymentsSettled(ctx, env)
 	default:
 		slog.Debug("finance ignoring event", "type", env.Type, "topic_envelope_source", env.Source)
 		return nil
@@ -197,6 +199,72 @@ func (h *financeHandler) handleFleetFuelRecorded(ctx context.Context, env platfo
 	if err == nil {
 		h.logBooked(ctx, env, entry)
 		h.linkOpenItem(ctx, env.Type, data.DocumentRef, entry, env.ID)
+	}
+	return err
+}
+
+// paymentsSettledData is the payload iag-payments emits on payments.settled
+// (see payments store.go outbox write). AmountMinor is whole-currency units
+// (UGX has no subunit in this platform: amountMinor == the shilling amount).
+type paymentsSettledData struct {
+	InstructionID   string `json:"instructionId"`
+	ReferenceNumber string `json:"referenceNumber"`
+	PartyBusinessID string `json:"partyBusinessId"`
+	OriginService   string `json:"originService"`
+	Category        string `json:"category"`
+	AmountMinor     int64  `json:"amountMinor"`
+	Currency        string `json:"currency"`
+	ProviderRef     string `json:"providerRef"`
+}
+
+// disbursementDebit maps a payments category to the GL account debited when the
+// disbursement settles. Cash (1000) is always the credit — money has left the
+// business.
+//
+// Only coffee_payout is classified directly: it has no prior finance document
+// (there is no cherry-intake→AP bridge), so it capitalises straight to Inventory.
+// Every other category lands in Payments Clearing (1050); finance reconciles that
+// control account against the originating document (vendor invoice, payroll run,
+// loan agreement, insurance claim). Routing through clearing — rather than
+// guessing COGS/AP/expense here — avoids both misclassifying disbursements and
+// double-booking against finance's native AP-payment / payroll GL paths.
+func disbursementDebit(category string) (code, memo string) {
+	if category == "coffee_payout" {
+		return "1400", "Coffee cherry purchase (inventory)"
+	}
+	label := category
+	if label == "" {
+		label = "unclassified"
+	}
+	return "1050", "Payments clearing — " + label
+}
+
+func (h *financeHandler) handlePaymentsSettled(ctx context.Context, env platformevents.Envelope) error {
+	var data paymentsSettledData
+	if err := remarshal(env.Data, &data); err != nil {
+		return platformevents.Permanent(err)
+	}
+	amount := decimal.NewFromInt(data.AmountMinor)
+	if amount.LessThanOrEqual(decimal.Zero) {
+		return nil
+	}
+	debitCode, debitMemo := disbursementDebit(data.Category)
+	desc := "Payment settled"
+	if data.ReferenceNumber != "" {
+		desc += " — " + data.ReferenceNumber
+	} else if data.InstructionID != "" {
+		desc += " — " + data.InstructionID
+	}
+	currency := data.Currency
+	if currency == "" {
+		currency = "UGX"
+	}
+	entry, err := h.ledger.BookFromEvent(ctx, env.ID, env.Type, env.Source, env.CorrelationID, desc, currency, []ledger.LineInput{
+		{AccountCode: debitCode, Debit: amount, Memo: debitMemo},
+		{AccountCode: "1000", Credit: amount, Memo: "Cash disbursed"},
+	})
+	if err == nil {
+		h.logBooked(ctx, env, entry)
 	}
 	return err
 }
