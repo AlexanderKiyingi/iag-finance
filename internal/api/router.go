@@ -128,6 +128,9 @@ func NewRouter(deps RouterDeps) *gin.Engine {
 		w.POST("/ledger/year-end/:year/close", api.CloseFiscalYear)
 		v1.GET("/fixed-assets", ledgerRead, api.ListFixedAssets)
 		w.POST("/fixed-assets", api.RegisterFixedAsset)
+		// IAS 38 intangible assets subledger (mirrors fixed-assets).
+		v1.GET("/intangible-assets", ledgerRead, api.ListIntangibleAssets)
+		w.POST("/intangible-assets", api.RegisterIntangibleAsset)
 		w.POST("/fixed-assets/depreciation/run", api.RunDepreciation)
 		// IAS 16 / IAS 36 — impairment and revaluation.
 		w.POST("/fixed-assets/impair", api.ImpairAsset)
