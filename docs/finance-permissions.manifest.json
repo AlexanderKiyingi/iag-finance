@@ -273,6 +273,14 @@
     },
     {
       "method": "POST",
+      "path": "/intangible-assets",
+      "permissions": [
+        "finance.run_depreciation",
+        "finance.change_ledger"
+      ]
+    },
+    {
+      "method": "POST",
       "path": "/fixed-assets/depreciation/run",
       "permissions": [
         "finance.run_depreciation",
@@ -345,6 +353,14 @@
     },
     {
       "method": "POST",
+      "path": "/fx/conversions",
+      "permissions": [
+        "finance.manage_fx",
+        "finance.change_ledger"
+      ]
+    },
+    {
+      "method": "POST",
       "path": "/tax-codes",
       "permissions": [
         "finance.manage_tax",
@@ -354,6 +370,14 @@
     {
       "method": "POST",
       "path": "/tax/reverse-charge",
+      "permissions": [
+        "finance.manage_tax",
+        "finance.change_ledger"
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/tax/withholding",
       "permissions": [
         "finance.manage_tax",
         "finance.change_ledger"
@@ -434,6 +458,14 @@
     {
       "method": "POST",
       "path": "/billing/recurring",
+      "permissions": [
+        "finance.issue_invoice",
+        "finance.change_ledger"
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/billing/time-entries",
       "permissions": [
         "finance.issue_invoice",
         "finance.change_ledger"
@@ -525,6 +557,14 @@
       "permissions": [
         "finance.issue_invoice",
         "finance.change_ledger"
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/ar/late-fees",
+      "permissions": [
+        "finance.change_ledger",
+        "finance.change_operations"
       ]
     },
     {
