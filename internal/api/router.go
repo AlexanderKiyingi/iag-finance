@@ -151,6 +151,9 @@ func NewRouter(deps RouterDeps) *gin.Engine {
 		v1.GET("/fx/rates", ledgerRead, api.ListExchangeRates)
 		w.POST("/fx/rates", api.UpsertExchangeRate)
 		w.POST("/fx/revalue", api.RevalueFX)
+		// FX conversions (treasury; record-only — see migration 061).
+		v1.GET("/fx/conversions", ledgerRead, api.ListFXConversions)
+		w.POST("/fx/conversions", api.RecordFXConversion)
 		v1.GET("/tax-codes", ledgerRead, api.ListTaxCodes)
 		w.POST("/tax-codes", api.UpsertTaxCode)
 		w.POST("/tax/reverse-charge", api.SelfAssessReverseCharge)
