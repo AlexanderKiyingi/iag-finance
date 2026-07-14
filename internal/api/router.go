@@ -154,6 +154,9 @@ func NewRouter(deps RouterDeps) *gin.Engine {
 		v1.GET("/tax-codes", ledgerRead, api.ListTaxCodes)
 		w.POST("/tax-codes", api.UpsertTaxCode)
 		w.POST("/tax/reverse-charge", api.SelfAssessReverseCharge)
+		// Withholding-tax receipts (WHT recoverable subledger).
+		v1.GET("/tax/withholding", ledgerRead, api.ListWHTReceipts)
+		w.POST("/tax/withholding", api.RecordWHTReceipt)
 		v1.GET("/reports/vat-return", ledgerRead, api.VATReturn)
 		v1.GET("/entities", ledgerRead, api.ListEntities)
 		w.POST("/entities", api.CreateEntity)
