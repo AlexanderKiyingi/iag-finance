@@ -157,6 +157,12 @@ func NewRouter(deps RouterDeps) *gin.Engine {
 		// Withholding-tax receipts (WHT recoverable subledger).
 		v1.GET("/tax/withholding", ledgerRead, api.ListWHTReceipts)
 		w.POST("/tax/withholding", api.RecordWHTReceipt)
+		// Late fees (Dr AR / Cr late-fee income).
+		v1.GET("/ar/late-fees", ledgerRead, api.ListLateFees)
+		w.POST("/ar/late-fees", api.RecordLateFee)
+		// Billable time entries (unbilled; no GL until invoiced).
+		v1.GET("/billing/time-entries", ledgerRead, api.ListTimeEntries)
+		w.POST("/billing/time-entries", api.RecordTimeEntry)
 		v1.GET("/reports/vat-return", ledgerRead, api.VATReturn)
 		v1.GET("/entities", ledgerRead, api.ListEntities)
 		w.POST("/entities", api.CreateEntity)
