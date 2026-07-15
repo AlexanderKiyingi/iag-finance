@@ -26,6 +26,7 @@ var (
 	// the repository package directly.
 	ErrNotReversible = repository.ErrNotReversible
 	ErrEntryNotFound = repository.ErrEntryNotFound
+	ErrNotDraft      = repository.ErrNotDraft
 )
 
 type LineInput struct {
@@ -82,6 +83,17 @@ func (s *Service) ListJournalEntries(ctx context.Context, limit, offset int) ([]
 
 func (s *Service) GetJournalEntry(ctx context.Context, id uuid.UUID) (*domain.JournalEntry, error) {
 	return s.repo.GetJournalEntry(ctx, id)
+}
+
+// DeleteDraftJournalEntry discards an unposted draft entry (posted entries must
+// be reversed). Returns ErrEntryNotFound / ErrNotDraft.
+func (s *Service) DeleteDraftJournalEntry(ctx context.Context, id uuid.UUID) error {
+	return s.repo.DeleteDraftEntry(ctx, id)
+}
+
+// DeactivateCostCenter soft-archives a cost-centre dimension.
+func (s *Service) DeactivateCostCenter(ctx context.Context, id uuid.UUID) error {
+	return s.repo.DeactivateCostCenter(ctx, id)
 }
 
 func (s *Service) ListARItems(ctx context.Context, limit, offset int) ([]domain.AROpenItem, error) {

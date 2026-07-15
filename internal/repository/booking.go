@@ -104,6 +104,40 @@ var ErrEntryNotFound = errors.New("journal entry not found")
 // (only a 'posted' entry can be reversed; a draft or already-reversed cannot).
 var ErrNotReversible = errors.New("only a posted entry can be reversed")
 
+// ErrNotDraft is returned when a delete is attempted on a non-draft entry.
+var ErrNotDraft = errors.New("only a draft entry can be deleted")
+
+// DeleteDraftEntry discards a draft journal entry and its lines. Only draft
+// entries may be deleted — a posted entry must be reversed (never deleted) so
+// the audit trail is preserved. Returns ErrEntryNotFound if missing, ErrNotDraft
+// if already posted/reversed.
+func (r *Repository) DeleteDraftEntry(ctx context.Context, id uuid.UUID) error {
+	tx, err := r.pool.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback(ctx)
+
+	var status string
+	err = tx.QueryRow(ctx, `SELECT status FROM journal_entries WHERE id = $1 FOR UPDATE`, id).Scan(&status)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return ErrEntryNotFound
+		}
+		return err
+	}
+	if status != "draft" {
+		return ErrNotDraft
+	}
+	if _, err := tx.Exec(ctx, `DELETE FROM journal_lines WHERE journal_entry_id = $1`, id); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(ctx, `DELETE FROM journal_entries WHERE id = $1`, id); err != nil {
+		return err
+	}
+	return tx.Commit(ctx)
+}
+
 // ReverseEntry posts a mirror-image entry that cancels a posted entry and marks
 // the original 'reversed' — all in one transaction. This is the correct way to
 // undo a posted entry (which is otherwise immutable). It is naturally

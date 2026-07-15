@@ -329,6 +329,32 @@ func (a *API) PostJournalEntry(c *gin.Context) {
 	})
 }
 
+// DeleteJournalEntry discards a DRAFT journal entry and its lines. Posted
+// entries are immutable and must be reversed instead (409) so the audit trail
+// is preserved — mirrors how QuickBooks/Zoho allow deleting only unposted drafts.
+func (a *API) DeleteJournalEntry(c *gin.Context) {
+	id, err := uuid.Parse(c.Param("id"))
+	if err != nil {
+		apierr.JSONStatus(c, http.StatusBadRequest, "invalid id")
+		return
+	}
+	if err := a.Ledger.DeleteDraftJournalEntry(c.Request.Context(), id); err != nil {
+		switch {
+		case errors.Is(err, ledger.ErrEntryNotFound):
+			apierr.JSONStatus(c, http.StatusNotFound, "journal entry not found")
+		case errors.Is(err, ledger.ErrNotDraft):
+			apierr.JSONStatus(c, http.StatusConflict, "only a draft entry can be deleted — reverse a posted entry instead")
+		default:
+			apierr.JSONStatus(c, http.StatusInternalServerError, "could not delete entry")
+		}
+		return
+	}
+	logBusinessEvent(c, a.Audit, auditlog.EventJournalPosted, "journal_entry", id.String(), http.StatusNoContent, map[string]any{
+		"action": "draft_deleted",
+	})
+	c.Status(http.StatusNoContent)
+}
+
 type reverseEntryRequest struct {
 	Reason string `json:"reason"`
 }

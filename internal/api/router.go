@@ -121,6 +121,7 @@ func NewRouter(deps RouterDeps) *gin.Engine {
 		w.POST("/ledger/entries", api.CreateJournalEntry)
 		w.POST("/ledger/entries/:id/post", api.PostJournalEntry)
 		w.POST("/ledger/entries/:id/reverse", api.ReverseJournalEntry)
+		w.DELETE("/ledger/entries/:id", api.DeleteJournalEntry)
 		w.POST("/ledger/validate-posting", ops.ValidatePosting)
 		v1.GET("/ledger/periods", ledgerRead, api.ListFiscalPeriods)
 		w.POST("/ledger/periods/:period/close", api.CloseFiscalPeriod)
@@ -191,6 +192,7 @@ func NewRouter(deps RouterDeps) *gin.Engine {
 		v1.GET("/projects/:id/profit-and-loss", ledgerRead, api.ProjectPL)
 		v1.GET("/cost-centers", ledgerRead, api.ListCostCenters)
 		w.POST("/cost-centers", api.CreateCostCenter)
+		w.DELETE("/cost-centers/:id", api.DeactivateCostCenter)
 		// Customer / vendor billing-party master — backs the frontend
 		// supplier/customer dropdowns and inline create-new.
 		v1.GET("/customers", ledgerRead, api.ListCustomers)

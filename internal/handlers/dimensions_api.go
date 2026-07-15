@@ -61,6 +61,21 @@ func (a *API) CreateCostCenter(c *gin.Context) {
 	c.JSON(http.StatusCreated, d)
 }
 
+// DeactivateCostCenter soft-archives a cost-centre (active=false) so it stops
+// appearing in pickers while its historical postings remain intact.
+func (a *API) DeactivateCostCenter(c *gin.Context) {
+	id, err := uuid.Parse(c.Param("id"))
+	if err != nil {
+		apierr.JSONStatus(c, http.StatusBadRequest, "invalid cost center id")
+		return
+	}
+	if err := a.Ledger.DeactivateCostCenter(c.Request.Context(), id); err != nil {
+		apierr.JSONStatus(c, http.StatusNotFound, "cost center not found")
+		return
+	}
+	c.Status(http.StatusNoContent)
+}
+
 // ProjectPL reports revenue/expense for one project (?from=&to=).
 func (a *API) ProjectPL(c *gin.Context) {
 	id, err := uuid.Parse(c.Param("id"))
