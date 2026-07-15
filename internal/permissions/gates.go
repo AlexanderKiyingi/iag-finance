@@ -32,21 +32,21 @@ func RouteGates() []RouteGate {
 	return []RouteGate{
 		// Integrations
 		{"POST", "/integrations/ura-efris/submit", granular("finance.submit_efris")},
-		{"POST", "/integrations/banking/statements", ledgerWrite()},
-		{"POST", "/integrations/banking/statements/:id/reconcile/auto", ledgerWrite()},
-		{"POST", "/integrations/banking/lines/:lineId/match", ledgerWrite()},
-		{"POST", "/integrations/banking/lines/:lineId/confirm", ledgerWrite()},
-		{"POST", "/integrations/banking/lines/:lineId/reject", ledgerWrite()},
-		{"POST", "/integrations/banking/sync", ledgerWrite()},
+		{"POST", "/integrations/banking/statements", granular("finance.manage_banking")},
+		{"POST", "/integrations/banking/statements/:id/reconcile/auto", granular("finance.manage_banking")},
+		{"POST", "/integrations/banking/lines/:lineId/match", granular("finance.manage_banking")},
+		{"POST", "/integrations/banking/lines/:lineId/confirm", granular("finance.manage_banking")},
+		{"POST", "/integrations/banking/lines/:lineId/reject", granular("finance.manage_banking")},
+		{"POST", "/integrations/banking/sync", granular("finance.manage_banking")},
 
 		// General ledger
 		{"POST", "/chart-of-accounts", granular("finance.manage_coa")},
 		{"PATCH", "/chart-of-accounts/:id", granular("finance.manage_coa")},
 		{"DELETE", "/chart-of-accounts/:id", granular("finance.manage_coa")},
-		{"POST", "/ledger/entries", ledgerWrite()},
-		{"POST", "/ledger/entries/:id/post", ledgerWrite()},
+		{"POST", "/ledger/entries", granular("finance.create_journal")},
+		{"POST", "/ledger/entries/:id/post", granular("finance.post_journal")},
 		{"POST", "/ledger/entries/:id/reverse", granular("finance.reverse_journal")},
-		{"POST", "/ledger/validate-posting", ledgerWrite()},
+		{"POST", "/ledger/validate-posting", granular("finance.create_journal")},
 		{"POST", "/ledger/periods/:period/close", granular("finance.close_period")},
 		{"POST", "/ledger/periods/:period/reopen", granular("finance.close_period")},
 		{"POST", "/ledger/year-end/:year/close", granular("finance.close_period")},
@@ -85,27 +85,27 @@ func RouteGates() []RouteGate {
 		{"POST", "/payments/intents", granular("finance.collect_payment")},
 		{"POST", "/payments/intents/:id/confirm", granular("finance.collect_payment")},
 
-		// Legacy invoices
-		{"POST", "/invoices", ledgerWrite()},
-		{"PATCH", "/invoices/:no", ledgerWrite()},
-		{"DELETE", "/invoices/:no", ledgerWrite()},
+		// Legacy invoices (AR)
+		{"POST", "/invoices", granular("finance.manage_ar")},
+		{"PATCH", "/invoices/:no", granular("finance.manage_ar")},
+		{"DELETE", "/invoices/:no", granular("finance.manage_ar")},
 
 		// Legacy AP bills (AP counterpart of /invoices)
-		{"POST", "/bills", ledgerWrite()},
-		{"PATCH", "/bills/:no", ledgerWrite()},
-		{"DELETE", "/bills/:no", ledgerWrite()},
+		{"POST", "/bills", granular("finance.manage_ap")},
+		{"PATCH", "/bills/:no", granular("finance.manage_ap")},
+		{"DELETE", "/bills/:no", granular("finance.manage_ap")},
 
 		// AR / AP
-		{"POST", "/ar/items", ledgerWrite()},
-		{"POST", "/ar/items/:id/payments", ledgerWrite()},
+		{"POST", "/ar/items", granular("finance.manage_ar")},
+		{"POST", "/ar/items/:id/payments", granular("finance.manage_ar")},
 		{"POST", "/ar/invoices/:documentRef/email", granular("finance.issue_invoice")},
-		{"POST", "/ar/late-fees", ledgerWrite()},
-		{"POST", "/ar/credit-notes", ledgerWrite()},
-		{"POST", "/ar/debit-notes", ledgerWrite()},
-		{"POST", "/ap/credit-notes", ledgerWrite()},
-		{"POST", "/ap/debit-notes", ledgerWrite()},
-		{"POST", "/ap/items", ledgerWrite()},
-		{"POST", "/ap/items/:id/payments", ledgerWrite()},
+		{"POST", "/ar/late-fees", granular("finance.manage_ar")},
+		{"POST", "/ar/credit-notes", granular("finance.manage_ar")},
+		{"POST", "/ar/debit-notes", granular("finance.manage_ar")},
+		{"POST", "/ap/credit-notes", granular("finance.manage_ap")},
+		{"POST", "/ap/debit-notes", granular("finance.manage_ap")},
+		{"POST", "/ap/items", granular("finance.manage_ap")},
+		{"POST", "/ap/items/:id/payments", granular("finance.manage_ap")},
 
 		// IFRS 9 provisioning / write-off / recovery
 		{"POST", "/provisions/ecl-run", granular("finance.manage_provisions")},

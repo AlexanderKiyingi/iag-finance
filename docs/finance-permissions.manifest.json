@@ -38,6 +38,26 @@
       "description": "Approve high-value journals/payments at tier 3 (highest band)"
     },
     {
+      "codename": "finance.create_journal",
+      "description": "Create draft journal entries (the maker half of maker-checker)"
+    },
+    {
+      "codename": "finance.post_journal",
+      "description": "Post a draft journal entry to the GL (the checker half)"
+    },
+    {
+      "codename": "finance.manage_ar",
+      "description": "Accounts-receivable writes: AR items, receipts, credit/debit notes, late fees, billing"
+    },
+    {
+      "codename": "finance.manage_ap",
+      "description": "Accounts-payable writes: AP items/bills, vendor payments, debit notes"
+    },
+    {
+      "codename": "finance.manage_banking",
+      "description": "Bank statements, reconciliation matching and feed sync"
+    },
+    {
       "codename": "finance.manage_coa",
       "description": "Create/modify chart-of-accounts structure"
     },
@@ -139,48 +159,48 @@
       "method": "POST",
       "path": "/integrations/banking/statements",
       "permissions": [
-        "finance.change_ledger",
-        "finance.change_operations"
+        "finance.manage_banking",
+        "finance.change_ledger"
       ]
     },
     {
       "method": "POST",
       "path": "/integrations/banking/statements/:id/reconcile/auto",
       "permissions": [
-        "finance.change_ledger",
-        "finance.change_operations"
+        "finance.manage_banking",
+        "finance.change_ledger"
       ]
     },
     {
       "method": "POST",
       "path": "/integrations/banking/lines/:lineId/match",
       "permissions": [
-        "finance.change_ledger",
-        "finance.change_operations"
+        "finance.manage_banking",
+        "finance.change_ledger"
       ]
     },
     {
       "method": "POST",
       "path": "/integrations/banking/lines/:lineId/confirm",
       "permissions": [
-        "finance.change_ledger",
-        "finance.change_operations"
+        "finance.manage_banking",
+        "finance.change_ledger"
       ]
     },
     {
       "method": "POST",
       "path": "/integrations/banking/lines/:lineId/reject",
       "permissions": [
-        "finance.change_ledger",
-        "finance.change_operations"
+        "finance.manage_banking",
+        "finance.change_ledger"
       ]
     },
     {
       "method": "POST",
       "path": "/integrations/banking/sync",
       "permissions": [
-        "finance.change_ledger",
-        "finance.change_operations"
+        "finance.manage_banking",
+        "finance.change_ledger"
       ]
     },
     {
@@ -211,16 +231,16 @@
       "method": "POST",
       "path": "/ledger/entries",
       "permissions": [
-        "finance.change_ledger",
-        "finance.change_operations"
+        "finance.create_journal",
+        "finance.change_ledger"
       ]
     },
     {
       "method": "POST",
       "path": "/ledger/entries/:id/post",
       "permissions": [
-        "finance.change_ledger",
-        "finance.change_operations"
+        "finance.post_journal",
+        "finance.change_ledger"
       ]
     },
     {
@@ -235,8 +255,8 @@
       "method": "POST",
       "path": "/ledger/validate-posting",
       "permissions": [
-        "finance.change_ledger",
-        "finance.change_operations"
+        "finance.create_journal",
+        "finance.change_ledger"
       ]
     },
     {
@@ -491,64 +511,64 @@
       "method": "POST",
       "path": "/invoices",
       "permissions": [
-        "finance.change_ledger",
-        "finance.change_operations"
+        "finance.manage_ar",
+        "finance.change_ledger"
       ]
     },
     {
       "method": "PATCH",
       "path": "/invoices/:no",
       "permissions": [
-        "finance.change_ledger",
-        "finance.change_operations"
+        "finance.manage_ar",
+        "finance.change_ledger"
       ]
     },
     {
       "method": "DELETE",
       "path": "/invoices/:no",
       "permissions": [
-        "finance.change_ledger",
-        "finance.change_operations"
+        "finance.manage_ar",
+        "finance.change_ledger"
       ]
     },
     {
       "method": "POST",
       "path": "/bills",
       "permissions": [
-        "finance.change_ledger",
-        "finance.change_operations"
+        "finance.manage_ap",
+        "finance.change_ledger"
       ]
     },
     {
       "method": "PATCH",
       "path": "/bills/:no",
       "permissions": [
-        "finance.change_ledger",
-        "finance.change_operations"
+        "finance.manage_ap",
+        "finance.change_ledger"
       ]
     },
     {
       "method": "DELETE",
       "path": "/bills/:no",
       "permissions": [
-        "finance.change_ledger",
-        "finance.change_operations"
+        "finance.manage_ap",
+        "finance.change_ledger"
       ]
     },
     {
       "method": "POST",
       "path": "/ar/items",
       "permissions": [
-        "finance.change_ledger",
-        "finance.change_operations"
+        "finance.manage_ar",
+        "finance.change_ledger"
       ]
     },
     {
       "method": "POST",
       "path": "/ar/items/:id/payments",
       "permissions": [
-        "finance.change_ledger",
-        "finance.change_operations"
+        "finance.manage_ar",
+        "finance.change_ledger"
       ]
     },
     {
@@ -563,56 +583,56 @@
       "method": "POST",
       "path": "/ar/late-fees",
       "permissions": [
-        "finance.change_ledger",
-        "finance.change_operations"
+        "finance.manage_ar",
+        "finance.change_ledger"
       ]
     },
     {
       "method": "POST",
       "path": "/ar/credit-notes",
       "permissions": [
-        "finance.change_ledger",
-        "finance.change_operations"
+        "finance.manage_ar",
+        "finance.change_ledger"
       ]
     },
     {
       "method": "POST",
       "path": "/ar/debit-notes",
       "permissions": [
-        "finance.change_ledger",
-        "finance.change_operations"
+        "finance.manage_ar",
+        "finance.change_ledger"
       ]
     },
     {
       "method": "POST",
       "path": "/ap/credit-notes",
       "permissions": [
-        "finance.change_ledger",
-        "finance.change_operations"
+        "finance.manage_ap",
+        "finance.change_ledger"
       ]
     },
     {
       "method": "POST",
       "path": "/ap/debit-notes",
       "permissions": [
-        "finance.change_ledger",
-        "finance.change_operations"
+        "finance.manage_ap",
+        "finance.change_ledger"
       ]
     },
     {
       "method": "POST",
       "path": "/ap/items",
       "permissions": [
-        "finance.change_ledger",
-        "finance.change_operations"
+        "finance.manage_ap",
+        "finance.change_ledger"
       ]
     },
     {
       "method": "POST",
       "path": "/ap/items/:id/payments",
       "permissions": [
-        "finance.change_ledger",
-        "finance.change_operations"
+        "finance.manage_ap",
+        "finance.change_ledger"
       ]
     },
     {
