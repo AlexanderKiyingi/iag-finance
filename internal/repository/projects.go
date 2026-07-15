@@ -58,6 +58,26 @@ func (r *Repository) ListCostCenters(ctx context.Context) ([]Dimension, error) {
 	return r.listDimensions(ctx, "cost_centers")
 }
 
+// deactivateDimension soft-archives a project/cost-centre (active=false) so it
+// stops appearing in pickers while its historical postings stay intact. Scoped
+// to the current entity. Returns ErrEntryNotFound when no such row exists.
+func (r *Repository) deactivateDimension(ctx context.Context, table string, id uuid.UUID) error {
+	ct, err := r.pool.Exec(ctx,
+		"UPDATE "+table+" SET active = false WHERE id = $1 AND entity_id = $2",
+		id, EntityFromContext(ctx))
+	if err != nil {
+		return err
+	}
+	if ct.RowsAffected() == 0 {
+		return ErrEntryNotFound
+	}
+	return nil
+}
+
+func (r *Repository) DeactivateCostCenter(ctx context.Context, id uuid.UUID) error {
+	return r.deactivateDimension(ctx, "cost_centers", id)
+}
+
 // ProjectPL is the revenue/expense detail for a single project over a window.
 func (r *Repository) ProjectPL(ctx context.Context, projectID uuid.UUID, from, to *time.Time) ([]PLRow, error) {
 	rows, err := r.pool.Query(ctx, `

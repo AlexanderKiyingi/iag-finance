@@ -46,6 +46,7 @@ func RouteGates() []RouteGate {
 		{"POST", "/ledger/entries", granular("finance.create_journal")},
 		{"POST", "/ledger/entries/:id/post", granular("finance.post_journal")},
 		{"POST", "/ledger/entries/:id/reverse", granular("finance.reverse_journal")},
+		{"DELETE", "/ledger/entries/:id", granular("finance.create_journal")},
 		{"POST", "/ledger/validate-posting", granular("finance.create_journal")},
 		{"POST", "/ledger/periods/:period/close", granular("finance.close_period")},
 		{"POST", "/ledger/periods/:period/reopen", granular("finance.close_period")},
@@ -74,6 +75,7 @@ func RouteGates() []RouteGate {
 		{"POST", "/budgets", granular("finance.manage_budgets")},
 		{"POST", "/projects", granular("finance.manage_dimensions")},
 		{"POST", "/cost-centers", granular("finance.manage_dimensions")},
+		{"DELETE", "/cost-centers/:id", granular("finance.manage_dimensions")},
 		{"POST", "/customers", granular("finance.manage_dimensions")},
 		{"POST", "/vendors", granular("finance.manage_dimensions")},
 

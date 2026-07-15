@@ -252,6 +252,14 @@
       ]
     },
     {
+      "method": "DELETE",
+      "path": "/ledger/entries/:id",
+      "permissions": [
+        "finance.create_journal",
+        "finance.change_ledger"
+      ]
+    },
+    {
       "method": "POST",
       "path": "/ledger/validate-posting",
       "permissions": [
@@ -438,6 +446,14 @@
     {
       "method": "POST",
       "path": "/cost-centers",
+      "permissions": [
+        "finance.manage_dimensions",
+        "finance.change_ledger"
+      ]
+    },
+    {
+      "method": "DELETE",
+      "path": "/cost-centers/:id",
       "permissions": [
         "finance.manage_dimensions",
         "finance.change_ledger"
