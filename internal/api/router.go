@@ -1,6 +1,9 @@
 package api
 
 import (
+	"log"
+
+	"github.com/alvor-technologies/iag-platform-go/ratelimit"
 	"github.com/gin-contrib/cors"
 	"github.com/gin-gonic/gin"
 	"github.com/iag-finance/backend/internal/auditlog"
@@ -33,6 +36,14 @@ type RouterDeps struct {
 
 func NewRouter(deps RouterDeps) *gin.Engine {
 	router := gin.New()
+	// Pin trusted proxies so the rate limiter keys on the real, non-spoofable
+	// client IP. Applied only when TRUSTED_PROXIES is set (to the gateway/edge
+	// CIDR); unset keeps gin's default so existing deployments don't regress.
+	if len(deps.Config.TrustedProxies) > 0 {
+		if err := router.SetTrustedProxies(deps.Config.TrustedProxies); err != nil {
+			log.Fatalf("finance: invalid TRUSTED_PROXIES: %v", err)
+		}
+	}
 	router.Use(gin.Logger(), gin.Recovery(), middleware.SecurityHeaders())
 
 	corsCfg := cors.Config{
@@ -92,7 +103,14 @@ func NewRouter(deps RouterDeps) *gin.Engine {
 	opsRead := middleware.RequireOperationsRead()
 	viewPayroll := middleware.Require("finance.view_payroll", "finance.view_ledger", "finance.view_operations")
 
-	v1 := router.Group("/v1", principal, middleware.EntityContext(), middleware.AuditLog(deps.AuditLog))
+	// Throttle the authenticated API per principal (or per IP), registered right
+	// after Principal so the key is the caller. The finance service previously had
+	// no rate limiting on its active router.
+	apiRateLimit := ratelimit.Middleware(ratelimit.Config{
+		Rate: ratelimit.PerMinute(deps.Config.RateLimitPerMin),
+		Key:  ratelimit.ByUserOrIP,
+	})
+	v1 := router.Group("/v1", principal, apiRateLimit, middleware.EntityContext(), middleware.AuditLog(deps.AuditLog))
 	{
 		// Mutating routes are gated from the declarative permission table
 		// (permissions.RouteGates()) via the registrar, which panics at startup

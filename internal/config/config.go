@@ -25,6 +25,11 @@ type Config struct {
 	SeedOnStartup     bool
 	AutoMigrate       bool
 	CORSAllowOrigins  []string
+	// TrustedProxies pins gin's trusted proxies (gateway/edge CIDR) so the rate
+	// limiter keys on the real, non-spoofable client IP. Empty = gin default.
+	TrustedProxies []string
+	// RateLimitPerMin is the per-principal (or per-IP) budget on the /v1 API.
+	RateLimitPerMin   int
 	EnableConsumer    bool
 	EnableEventPublish bool
 	KafkaBrokers      []string
@@ -124,6 +129,17 @@ func Load() (Config, error) {
 		}
 	}
 
+	var trustedProxies []string
+	for _, p := range strings.Split(os.Getenv("TRUSTED_PROXIES"), ",") {
+		if s := strings.TrimSpace(p); s != "" {
+			trustedProxies = append(trustedProxies, s)
+		}
+	}
+	rlPerMin, _ := strconv.Atoi(getEnv("RATE_LIMIT_PER_MIN", "300"))
+	if rlPerMin <= 0 {
+		rlPerMin = 300
+	}
+
 	cfg := Config{
 		ServiceName:         getEnv("SERVICE_NAME", "finance"),
 		BaseCurrency:        strings.ToUpper(getEnv("BASE_CURRENCY", "UGX")),
@@ -138,6 +154,8 @@ func Load() (Config, error) {
 		SeedOnStartup:       getEnv("SEED_ON_STARTUP", seedDefault) == "true",
 		AutoMigrate:         getEnv("AUTO_MIGRATE", "true") != "false",
 		CORSAllowOrigins:    corsOrigins,
+		TrustedProxies:      trustedProxies,
+		RateLimitPerMin:     rlPerMin,
 		EnableConsumer:       getEnv("ENABLE_CONSUMER", defaultConsumer(env)) == "true",
 		EnableEventPublish:   getEnv("ENABLE_EVENT_PUBLISH", "true") == "true",
 		KafkaBrokers:         splitBrokers(getEnv("KAFKA_BROKERS", "localhost:19092")),
