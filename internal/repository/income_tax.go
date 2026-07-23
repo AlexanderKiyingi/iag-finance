@@ -92,18 +92,20 @@ func (r *Repository) RunCurrentTax(ctx context.Context, period string, taxablePr
 		AccountingDate: postedAt,
 		Lines:          lines,
 	}, eventID, "finance.tax.current", postedAt, func(ctx context.Context, tx pgx.Tx, entryID uuid.UUID) error {
+		var id uuid.UUID
+		var createdAt time.Time
 		err := tx.QueryRow(ctx, `
 			INSERT INTO income_tax_runs (entity_id, period, taxable_profit, rate, tax_amount, journal_entry_id)
 			VALUES ($1, $2, $3::numeric, $4::numeric, $5::numeric, $6)
-			RETURNING id
-		`, EntityFromContext(ctx), period, taxableProfit.String(), rate.String(), tax.String(), entryID).Scan(new(uuid.UUID))
+			RETURNING id, created_at
+		`, EntityFromContext(ctx), period, taxableProfit.String(), rate.String(), tax.String(), entryID).Scan(&id, &createdAt)
 		if err != nil {
 			if IsUniqueViolation(err) {
 				return ErrTaxRunExists
 			}
 			return err
 		}
-		out = &IncomeTaxRun{Period: period, TaxableProfit: taxableProfit, Rate: rate, TaxAmount: tax}
+		out = &IncomeTaxRun{ID: id, Period: period, TaxableProfit: taxableProfit, Rate: rate, TaxAmount: tax, CreatedAt: createdAt}
 		return nil
 	}, audit)
 	if err != nil {
@@ -170,18 +172,20 @@ func (r *Repository) RecognizeDeferredTax(ctx context.Context, ref, description 
 		AccountingDate: postedAt,
 		Lines:          lines,
 	}, eventID, "finance.tax.deferred", postedAt, func(ctx context.Context, tx pgx.Tx, entryID uuid.UUID) error {
+		var id uuid.UUID
+		var createdAt time.Time
 		err := tx.QueryRow(ctx, `
 			INSERT INTO deferred_tax_items (entity_id, reference, description, temp_difference, dtype, rate, tax_amount, journal_entry_id)
 			VALUES ($1, $2, $3, $4::numeric, $5, $6::numeric, $7::numeric, $8)
-			RETURNING id
-		`, EntityFromContext(ctx), ref, description, tempDiff.String(), dtype, rate.String(), tax.String(), entryID).Scan(new(uuid.UUID))
+			RETURNING id, created_at
+		`, EntityFromContext(ctx), ref, description, tempDiff.String(), dtype, rate.String(), tax.String(), entryID).Scan(&id, &createdAt)
 		if err != nil {
 			if IsUniqueViolation(err) {
 				return ErrDeferredTaxExists
 			}
 			return err
 		}
-		out = &DeferredTaxItem{Reference: ref, Description: description, TempDifference: tempDiff, DType: dtype, Rate: rate, TaxAmount: tax}
+		out = &DeferredTaxItem{ID: id, Reference: ref, Description: description, TempDifference: tempDiff, DType: dtype, Rate: rate, TaxAmount: tax, CreatedAt: createdAt}
 		return nil
 	}, audit)
 	if err != nil {

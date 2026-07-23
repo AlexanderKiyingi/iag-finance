@@ -47,7 +47,10 @@ func (r *Repository) BudgetVsActual(ctx context.Context, from, to *time.Time, en
 				AND ($1::date IS NULL OR je.accounting_date >= $1)
 				AND ($2::date IS NULL OR je.accounting_date <= $2)
 				AND je.entity_id = ANY($3::uuid[])
-			GROUP BY coa.code
+			-- account_type is the CASE discriminator, so it must be grouped too;
+			-- coa.code is UNIQUE (not the PK), so Postgres won't infer the
+			-- functional dependency and rejects grouping by code alone (42803).
+			GROUP BY coa.code, coa.account_type
 		),
 		bud AS (
 			SELECT account_code AS code, SUM(amount) AS amt
