@@ -17,12 +17,22 @@ import (
 var ErrPeriodClosed = errors.New("accounting period is closed")
 
 type Repository struct {
-	pool         *pgxpool.Pool
-	baseCurrency string
+	pool              *pgxpool.Pool
+	baseCurrency      string
+	vendorSyncEnabled bool
+	vendorSyncTopic   string
 }
 
 func New(pool *pgxpool.Pool) *Repository {
 	return &Repository{pool: pool, baseCurrency: "UGX"}
+}
+
+// SetVendorSync enables emission of party.vendor.upserted (to topic) when a
+// finance vendor is created, for the cross-service vendor master mesh. Off by
+// default so the mesh stays inert until every peer service is deployed with it on.
+func (r *Repository) SetVendorSync(enabled bool, topic string) {
+	r.vendorSyncEnabled = enabled && topic != ""
+	r.vendorSyncTopic = topic
 }
 
 // SetBaseCurrency sets the reporting/base currency (default UGX). All journal

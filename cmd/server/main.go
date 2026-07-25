@@ -70,6 +70,7 @@ func main() {
 	ledgerSvc, auditSvc := api.NewLedger(pool, cfg.BaseCurrency)
 	repo := repository.New(pool)
 	repo.SetBaseCurrency(cfg.BaseCurrency)
+	repo.SetVendorSync(cfg.VendorSyncEnabled, cfg.KafkaTopic)
 
 	if cfg.ServiceClientSecret != "" {
 		go registerPermissionsLoop(ctx, cfg)
@@ -199,7 +200,7 @@ func main() {
 			GroupID:  "iag.finance.supply-chain",
 			Topic:    cfg.KafkaSupplyChainTopic,
 			DLQTopic: cfg.KafkaDLQTopic,
-		}, repo, dlqProducer)
+		}, repo, dlqProducer, cfg.VendorSyncEnabled)
 		if err != nil {
 			log.Fatal("finance supply-chain consumer: ", err)
 		}
@@ -253,6 +254,22 @@ func main() {
 			log.Fatal("finance payments consumer: ", err)
 		}
 		consumers = append(consumers, c7)
+
+		// Octonary: iag.commercial — party.vendor.upserted → finance vendor master
+		// (bidirectional vendor mesh). Own consumer group so it advances
+		// independently of the AP-inbox procurement consumer on the same topic.
+		if cfg.VendorSyncEnabled {
+			c8, err := consumer.NewVendorSync(consumer.Config{
+				Brokers:  cfg.KafkaBrokers,
+				GroupID:  "iag.finance.vendor-sync",
+				Topic:    cfg.KafkaCommercialTopic,
+				DLQTopic: cfg.KafkaDLQTopic,
+			}, repo, dlqProducer)
+			if err != nil {
+				log.Fatal("finance vendor-sync consumer: ", err)
+			}
+			consumers = append(consumers, c8)
+		}
 
 		for _, c := range consumers {
 			c := c

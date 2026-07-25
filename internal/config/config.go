@@ -32,6 +32,11 @@ type Config struct {
 	RateLimitPerMin   int
 	EnableConsumer    bool
 	EnableEventPublish bool
+	// VendorSyncEnabled turns on the bidirectional vendor master mesh: finance
+	// emits party.vendor.upserted when a vendor is created and ingests peers'
+	// party.vendor.upserted (from iag.commercial) + SCM vendor parties into the
+	// vendors master. Default false. Set via FINANCE_VENDOR_SYNC_ENABLED.
+	VendorSyncEnabled bool
 	KafkaBrokers      []string
 	KafkaClientID     string
 	KafkaGroupID      string
@@ -158,6 +163,7 @@ func Load() (Config, error) {
 		RateLimitPerMin:     rlPerMin,
 		EnableConsumer:       getEnv("ENABLE_CONSUMER", defaultConsumer(env)) == "true",
 		EnableEventPublish:   getEnv("ENABLE_EVENT_PUBLISH", "true") == "true",
+		VendorSyncEnabled:    getEnv("FINANCE_VENDOR_SYNC_ENABLED", "false") == "true",
 		KafkaBrokers:         splitBrokers(getEnv("KAFKA_BROKERS", "localhost:19092")),
 		KafkaClientID:       getEnv("KAFKA_CLIENT_ID", "finance"),
 		KafkaGroupID:        getEnv("KAFKA_GROUP_ID", "iag.finance.ledger"),
