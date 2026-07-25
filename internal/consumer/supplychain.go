@@ -19,8 +19,7 @@ const (
 )
 
 type supplyChainHandler struct {
-	repo       *repository.Repository
-	vendorSync bool
+	repo *repository.Repository
 }
 
 func (h *supplyChainHandler) Handle(ctx context.Context, env platformevents.Envelope) error {
@@ -70,7 +69,7 @@ func (h *supplyChainHandler) syncAPParty(ctx context.Context, data map[string]an
 	// vendor list (not just as a backfilled party_id on AP rows). Only vendor-like
 	// suppliers become finance vendors; farmers/cooperatives are AP counterparties
 	// but not billing vendors, so they stop at the AP backfill above.
-	if h.vendorSync && strings.EqualFold(strings.TrimSpace(supplierType), "vendor") {
+	if strings.EqualFold(strings.TrimSpace(supplierType), "vendor") {
 		if err := h.repo.UpsertVendorByParty(ctx, repository.DefaultEntityID, partyID,
 			businessID, name, "", "", "", "Active"); err != nil {
 			return err
@@ -104,9 +103,9 @@ func (h *supplyChainHandler) syncPortalLink(ctx context.Context, data map[string
 }
 
 // NewSupplyChain builds a consumer for iag.supply-chain party sync (Phase 4.6).
-// vendorSync additionally lands SCM vendor parties in the finance vendor master.
-func NewSupplyChain(cfg Config, repo *repository.Repository, dlq *platformevents.Producer, vendorSync bool) (*Consumer, error) {
-	h := &supplyChainHandler{repo: repo, vendorSync: vendorSync}
+// It also lands SCM vendor parties in the finance vendor master.
+func NewSupplyChain(cfg Config, repo *repository.Repository, dlq *platformevents.Producer) (*Consumer, error) {
+	h := &supplyChainHandler{repo: repo}
 	inner, err := platformevents.NewConsumer(platformevents.ConsumerConfig{
 		Brokers:     cfg.Brokers,
 		Topic:       cfg.Topic,

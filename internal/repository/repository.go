@@ -17,21 +17,20 @@ import (
 var ErrPeriodClosed = errors.New("accounting period is closed")
 
 type Repository struct {
-	pool              *pgxpool.Pool
-	baseCurrency      string
-	vendorSyncEnabled bool
-	vendorSyncTopic   string
+	pool            *pgxpool.Pool
+	baseCurrency    string
+	vendorSyncTopic string
 }
 
 func New(pool *pgxpool.Pool) *Repository {
 	return &Repository{pool: pool, baseCurrency: "UGX"}
 }
 
-// SetVendorSync enables emission of party.vendor.upserted (to topic) when a
-// finance vendor is created, for the cross-service vendor master mesh. Off by
-// default so the mesh stays inert until every peer service is deployed with it on.
-func (r *Repository) SetVendorSync(enabled bool, topic string) {
-	r.vendorSyncEnabled = enabled && topic != ""
+// SetVendorEventTopic sets the Kafka topic finance emits party.vendor.upserted on
+// when a vendor is created (the cross-service vendor master mesh). Emission is
+// always on wherever the topic is configured — there is no separate opt-in flag;
+// the outbox relay delivers when the event bus is up.
+func (r *Repository) SetVendorEventTopic(topic string) {
 	r.vendorSyncTopic = topic
 }
 

@@ -51,7 +51,7 @@ func (r *Repository) createParty(ctx context.Context, table, code, name, email, 
 		return nil, err
 	}
 
-	if emitVendorEvent {
+	if emitVendorEvent && r.vendorSyncTopic != "" {
 		status := "Active"
 		if !p.Active {
 			status = "Inactive"
@@ -173,7 +173,7 @@ func (r *Repository) CustomerEmailByRef(ctx context.Context, ref string) (string
 }
 
 func (r *Repository) CreateVendor(ctx context.Context, code, name, email, phone, currency string) (*Party, error) {
-	return r.createParty(ctx, "vendors", code, name, email, phone, currency, r.vendorSyncEnabled)
+	return r.createParty(ctx, "vendors", code, name, email, phone, currency, true)
 }
 func (r *Repository) ListVendors(ctx context.Context) ([]Party, error) {
 	return r.listParties(ctx, "vendors")
