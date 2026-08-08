@@ -167,8 +167,11 @@ func (h *financeHandler) handleInvoicePosted(ctx context.Context, env platformev
 	if err := remarshal(env.Data, &data); err != nil {
 		return platformevents.Permanent(err)
 	}
-	amount := parseAmount(data.Amount)
-	if amount.IsZero() {
+	amount, ok, err := parseAmountStrict(data.Amount)
+	if err != nil {
+		return platformevents.Permanent(err)
+	}
+	if !ok {
 		return nil
 	}
 	desc := "Invoice posted"

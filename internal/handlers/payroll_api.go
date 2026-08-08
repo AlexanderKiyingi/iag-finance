@@ -318,3 +318,27 @@ func (a *API) ListOrphanedAPJournals(c *gin.Context) {
 	}
 	c.JSON(http.StatusOK, gin.H{"items": items, "summary": summary})
 }
+
+// ListContractPayables reports payables raised from contract payments and the
+// currency each was booked in.
+//
+// Finance hardcoded UGX on these and contract-management sent no currency, so
+// every payment on a non-UGX contract was booked as the same number of
+// shillings. Both sides are fixed; entries made before that are still wrong,
+// and finance cannot tell which — the true currency lives on the contract.
+//
+// The per-currency summary is the reconciliation. A deployment whose contracts
+// are all in shillings sees one currency and has nothing to check.
+func (a *API) ListContractPayables(c *gin.Context) {
+	if a.Repo == nil {
+		apierr.JSONStatus(c, http.StatusServiceUnavailable, "repository unavailable")
+		return
+	}
+	items, summary, err := a.Repo.ListContractPayables(c.Request.Context(),
+		strings.TrimSpace(c.Query("currency")), payrollQueryLimit(c, 200))
+	if err != nil {
+		apierr.JSONStatus(c, http.StatusInternalServerError, "could not list contract payables")
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"items": items, "byCurrency": summary})
+}

@@ -291,6 +291,7 @@ func NewRouter(deps RouterDeps) *gin.Engine {
 		v1.GET("/ap/items", ledgerRead, api.ListAPItems)
 		// Payables the ledger carries that the subledger cannot explain.
 		v1.GET("/ap/orphaned-journals", ledgerRead, api.ListOrphanedAPJournals)
+		v1.GET("/ap/contract-payables", ledgerRead, api.ListContractPayables)
 		w.POST("/ap/items", api.CreateAPItem)
 		w.POST("/ap/items/:id/payments", api.ApplyAPPayment)
 		v1.GET("/ap/items/:id/payments", ledgerRead, api.ListAPPayments)

@@ -20,12 +20,12 @@ import (
 
 // APOrphanRow is one journal crediting AP with nothing in the subledger.
 type APOrphanRow struct {
-	JournalEntryID uuid.UUID `json:"journalEntryId"`
-	EntryNumber    string    `json:"entryNumber"`
-	Description    string    `json:"description"`
-	SourceService  string    `json:"sourceService,omitempty"`
-	SourceEventID  string    `json:"sourceEventId,omitempty"`
-	APCredit       string    `json:"apCredit"`
+	JournalEntryID uuid.UUID  `json:"journalEntryId"`
+	EntryNumber    string     `json:"entryNumber"`
+	Description    string     `json:"description"`
+	SourceService  string     `json:"sourceService,omitempty"`
+	SourceEventID  string     `json:"sourceEventId,omitempty"`
+	APCredit       string     `json:"apCredit"`
 	PostedAt       *time.Time `json:"postedAt,omitempty"`
 }
 
@@ -89,6 +89,99 @@ func (r *Repository) ListOrphanedAPJournals(ctx context.Context, limit int) ([]A
 			return nil, nil, err
 		}
 		out = append(out, o)
+	}
+	return out, summary, rows.Err()
+}
+
+// Contract payables and the currency they were booked in.
+//
+// Finance hardcoded UGX when creating a payable from contracts.payment.authorized,
+// and contract-management did not send the contract's currency, so every payment
+// on a non-UGX contract was booked as the same number of shillings. Both sides
+// are fixed, but entries made before that are still wrong in the ledger and
+// finance cannot tell which: the true currency lives on the contract.
+//
+// This lists them so they can be reconciled against contract-management. The
+// documentRef prefix is finance's own convention for contract payables, set
+// where the item is created, not a guess at someone else's format.
+
+// ContractPayableRow is one payable raised from a contract payment.
+type ContractPayableRow struct {
+	DocumentRef string    `json:"documentRef"`
+	VendorRef   string    `json:"vendorRef"`
+	Description string    `json:"description"`
+	Amount      string    `json:"amount"`
+	Currency    string    `json:"currency"`
+	Status      string    `json:"status"`
+	CreatedAt   time.Time `json:"createdAt"`
+}
+
+// ContractPayableCurrency is the count and total booked under one currency.
+type ContractPayableCurrency struct {
+	Currency string `json:"currency"`
+	Count    int    `json:"count"`
+	Total    string `json:"total"`
+}
+
+const contractPayablePrefix = "CT-PAY-%"
+
+// ListContractPayables returns contract-sourced payables, newest first, with a
+// per-currency summary.
+//
+// The summary is the reconciliation: a deployment whose contracts are all in
+// shillings should see one currency and nothing to check. Anything else is the
+// list of entries to compare against the contracts that raised them.
+func (r *Repository) ListContractPayables(ctx context.Context, currency string, limit int) (
+	[]ContractPayableRow, []ContractPayableCurrency, error) {
+
+	if limit <= 0 || limit > 1000 {
+		limit = 200
+	}
+
+	summaryRows, err := r.pool.Query(ctx, `
+		SELECT currency, COUNT(*), COALESCE(SUM(amount), 0)::text
+		FROM ap_open_items
+		WHERE document_ref LIKE $1
+		GROUP BY currency
+		ORDER BY COUNT(*) DESC`, contractPayablePrefix)
+	if err != nil {
+		return nil, nil, err
+	}
+	summary := []ContractPayableCurrency{}
+	for summaryRows.Next() {
+		var c ContractPayableCurrency
+		if err := summaryRows.Scan(&c.Currency, &c.Count, &c.Total); err != nil {
+			summaryRows.Close()
+			return nil, nil, err
+		}
+		summary = append(summary, c)
+	}
+	summaryRows.Close()
+	if err := summaryRows.Err(); err != nil {
+		return nil, nil, err
+	}
+
+	rows, err := r.pool.Query(ctx, `
+		SELECT document_ref, COALESCE(vendor_ref, ''), COALESCE(description, ''),
+		       amount::text, currency, status, created_at
+		FROM ap_open_items
+		WHERE document_ref LIKE $1
+		  AND ($2 = '' OR currency = $2)
+		ORDER BY created_at DESC
+		LIMIT $3`, contractPayablePrefix, currency, limit)
+	if err != nil {
+		return nil, nil, err
+	}
+	defer rows.Close()
+
+	out := []ContractPayableRow{}
+	for rows.Next() {
+		var p ContractPayableRow
+		if err := rows.Scan(&p.DocumentRef, &p.VendorRef, &p.Description,
+			&p.Amount, &p.Currency, &p.Status, &p.CreatedAt); err != nil {
+			return nil, nil, err
+		}
+		out = append(out, p)
 	}
 	return out, summary, rows.Err()
 }

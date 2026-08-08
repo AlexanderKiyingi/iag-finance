@@ -56,8 +56,11 @@ func (h *procurementHandler) handleGRNPosted(ctx context.Context, env platformev
 	if poRef == "" || strings.TrimSpace(amountStr) == "" {
 		return nil
 	}
-	value := parseAmount(amountStr)
-	if value.IsZero() {
+	value, ok, err := parseAmountStrict(amountStr)
+	if err != nil {
+		return platformevents.Permanent(err)
+	}
+	if !ok {
 		return nil
 	}
 	currency, _ := data["currency"].(string)
@@ -106,6 +109,14 @@ func (h *procurementHandler) handlePaymentAuthorized(ctx context.Context, env pl
 	// shillings — a payable understated by whatever the rate is.
 	currency, _ := data["currency"].(string)
 	if strings.TrimSpace(currency) == "" {
+		// contract-management sends the contract's currency. An event without
+		// one is either a replay from before that, or a producer that has
+		// regressed. Defaulting is still the right call — refusing would strand
+		// a real payable — but it is recorded rather than assumed silently,
+		// because a wrongly-denominated payable is invisible once booked.
+		// GET /v1/ap/contract-payables lists these for reconciliation.
+		slog.Warn("contract payment event carried no currency; booking as UGX",
+			"documentRef", documentRef, "eventId", env.ID)
 		currency = "UGX"
 	}
 	item, err := h.ledger.CreateAPItem(ctx, vendorRef, documentRef, desc, amount, currency, nil, nil)
