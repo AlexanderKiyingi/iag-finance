@@ -22,6 +22,11 @@ const (
 	erpLeaveApproved      = "erp.leave.approved"
 	erpLeaveRejected      = "erp.leave.rejected"
 	erpLeaveCancelled     = "erp.leave.cancelled"
+	// The obligation side: how much leave is earned and untaken, and what a
+	// day of it is worth. The events above report consumption, which is the
+	// wrong side to accrue a liability from.
+	erpLeaveBalanceChanged = "erp.leave.balance_changed"
+	erpEmployeeRateChanged = "erp.employee.rate_changed"
 )
 
 type erpHandler struct {
@@ -32,6 +37,10 @@ func (h *erpHandler) Handle(ctx context.Context, env platformevents.Envelope) er
 	switch env.Type {
 	case erpEmployeeCreated, erpEmployeeUpdated, erpEmployeeTerminated:
 		return h.handleEmployee(ctx, env)
+	case erpLeaveBalanceChanged:
+		return h.handleLeaveBalance(ctx, env)
+	case erpEmployeeRateChanged:
+		return h.handleEmployeeRate(ctx, env)
 	case erpLeaveApproved, erpLeaveRejected, erpLeaveCancelled:
 		return h.handleLeave(ctx, env)
 	default:
@@ -191,4 +200,75 @@ func parseEnvTime(s string) time.Time {
 		return time.Time{}
 	}
 	return t.UTC()
+}
+
+type erpLeaveBalanceData struct {
+	EmployeeNo    string  `json:"employee_no"`
+	LeaveTypeCode string  `json:"leave_type_code"`
+	AccrualYear   int     `json:"accrual_year"`
+	BalanceDays   float64 `json:"balance_days"`
+}
+
+// handleLeaveBalance records what HR says is owed. It stores days, not money:
+// valuing them is a separate act, run deliberately, so the liability moves when
+// finance measures it rather than every time an employee books a Friday off.
+func (h *erpHandler) handleLeaveBalance(ctx context.Context, env platformevents.Envelope) error {
+	var data erpLeaveBalanceData
+	if err := remarshal(env.Data, &data); err != nil {
+		return platformevents.Permanent(err)
+	}
+	data.EmployeeNo = strings.TrimSpace(data.EmployeeNo)
+	if data.EmployeeNo == "" || data.AccrualYear <= 0 {
+		return platformevents.Permanent(errors.New("erp leave balance event missing employee_no or accrual_year"))
+	}
+	if err := h.repo.UpsertLeaveBalance(ctx, repository.LeaveBalanceUpsert{
+		EmployeeNo:    data.EmployeeNo,
+		LeaveTypeCode: strings.TrimSpace(data.LeaveTypeCode),
+		AccrualYear:   data.AccrualYear,
+		BalanceDays:   fmt.Sprintf("%.2f", data.BalanceDays),
+		EventID:       env.ID,
+	}); err != nil {
+		return err
+	}
+	slog.Info("finance leave balance recorded", "employee_no", data.EmployeeNo,
+		"days", data.BalanceDays, "year", data.AccrualYear)
+	return nil
+}
+
+type erpEmployeeRateData struct {
+	EmployeeNo    string  `json:"employee_no"`
+	DailyRate     float64 `json:"daily_rate"`
+	Currency      string  `json:"currency"`
+	EffectiveFrom string  `json:"effective_from"`
+}
+
+// handleEmployeeRate records what a day of an employee's time is worth. HR
+// publishes only this derived figure — never gross or benefits.
+func (h *erpHandler) handleEmployeeRate(ctx context.Context, env platformevents.Envelope) error {
+	var data erpEmployeeRateData
+	if err := remarshal(env.Data, &data); err != nil {
+		return platformevents.Permanent(err)
+	}
+	data.EmployeeNo = strings.TrimSpace(data.EmployeeNo)
+	if data.EmployeeNo == "" || data.DailyRate <= 0 {
+		return platformevents.Permanent(errors.New("erp rate event missing employee_no or a positive daily_rate"))
+	}
+	effective, err := time.Parse("2006-01-02", strings.TrimSpace(data.EffectiveFrom))
+	if err != nil {
+		return platformevents.Permanent(errors.New("erp rate event missing a valid effective_from"))
+	}
+	currency := strings.TrimSpace(data.Currency)
+	if currency == "" {
+		currency = "UGX"
+	}
+	if err := h.repo.UpsertEmployeeRate(ctx, repository.EmployeeRateUpsert{
+		EmployeeNo:    data.EmployeeNo,
+		DailyRate:     fmt.Sprintf("%.2f", data.DailyRate),
+		Currency:      currency,
+		EffectiveFrom: effective,
+	}); err != nil {
+		return err
+	}
+	slog.Info("finance employee rate recorded", "employee_no", data.EmployeeNo, "rate", data.DailyRate)
+	return nil
 }

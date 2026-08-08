@@ -305,6 +305,7 @@ func NewRouter(deps RouterDeps) *gin.Engine {
 		// derive it yet.
 		v1.GET("/payroll/leave-provisions", viewPayroll, api.ListLeaveProvisions)
 		w.POST("/payroll/leave-provisions", api.PostLeaveProvision)
+		w.POST("/payroll/leave-valuations", api.ValueLeaveLiability)
 
 		v1.GET("/portal/me", middleware.RequirePortalAP(), api.PortalMe)
 		v1.GET("/portal/ap", middleware.RequirePortalAP(), api.PortalAP)

@@ -2,9 +2,11 @@ package handlers
 
 import (
 	"errors"
+	"io"
 	"net/http"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/shopspring/decimal"
@@ -211,4 +213,52 @@ func (a *API) ListLeaveProvisions(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"items": items})
+}
+
+type valueLeaveRequest struct {
+	// Year defaults to the year of ValuedAt.
+	Year int `json:"year"`
+	// ValuedAt defaults to today. One valuation per date: re-running a day
+	// replaces it rather than stacking movements on the same closing figure.
+	ValuedAt string `json:"valuedAt"`
+}
+
+// ValueLeaveLiability measures the accrued-leave obligation from the balances
+// and rates HR reports, and books the movement since the last valuation.
+//
+// This is the computed counterpart to POST /payroll/leave-provisions, which
+// remains for correction entries and for deployments where HR does not yet
+// publish balances or rates.
+func (a *API) ValueLeaveLiability(c *gin.Context) {
+	var req valueLeaveRequest
+	if err := c.ShouldBindJSON(&req); err != nil && !errors.Is(err, io.EOF) {
+		apierr.JSONStatus(c, http.StatusBadRequest, err.Error())
+		return
+	}
+	valuedAt := time.Now().UTC()
+	if s := strings.TrimSpace(req.ValuedAt); s != "" {
+		parsed, err := time.Parse("2006-01-02", s)
+		if err != nil {
+			apierr.JSONStatus(c, http.StatusBadRequest, "valuedAt must be YYYY-MM-DD")
+			return
+		}
+		valuedAt = parsed
+	}
+
+	out, err := a.Ledger.ValueLeaveLiability(c.Request.Context(), req.Year, valuedAt)
+	if err != nil {
+		status := http.StatusInternalServerError
+		if errors.Is(err, ledger.ErrPeriodClosed) || errors.Is(err, ledger.ErrAccountNotFound) {
+			status = http.StatusUnprocessableEntity
+		}
+		apierr.JSONStatus(c, status, err.Error())
+		return
+	}
+	c.JSON(http.StatusOK, out)
+	logBusinessEvent(c, a.Audit, auditlog.EventPayrollRunPosted, "leave_valuation",
+		out.ValuedAt.Format("2006-01-02"), http.StatusOK, map[string]any{
+			"totalLiability": out.TotalLiability.String(),
+			"movement":       out.Movement.String(),
+			"unrated":        out.EmployeesUnrated,
+		})
 }

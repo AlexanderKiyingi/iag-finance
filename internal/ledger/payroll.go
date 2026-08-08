@@ -3,6 +3,8 @@ package ledger
 import (
 	"context"
 	"errors"
+	"github.com/google/uuid"
+	"time"
 
 	"github.com/shopspring/decimal"
 
@@ -212,4 +214,94 @@ func (s *Service) PostLeaveProvision(ctx context.Context, in LeaveProvisionInput
 // ListLeaveProvisions returns booked provisions, newest first.
 func (s *Service) ListLeaveProvisions(ctx context.Context, period string, limit int) ([]repository.LeaveProvision, error) {
 	return s.repo.ListLeaveProvisions(ctx, period, limit)
+}
+
+// LeaveValuation is the outcome of measuring the accrued-leave liability.
+type LeaveValuation struct {
+	ValuedAt         time.Time       `json:"valuedAt"`
+	TotalLiability   decimal.Decimal `json:"totalLiability"`
+	Movement         decimal.Decimal `json:"movement"`
+	EmployeesValued  int             `json:"employeesValued"`
+	EmployeesUnrated int             `json:"employeesUnrated"`
+	JournalEntryID   *uuid.UUID      `json:"journalEntryId,omitempty"`
+}
+
+// ValueLeaveLiability measures the obligation from the balances and rates HR
+// reports, and books the movement since the last valuation.
+//
+// It books the *difference*, never the total: the liability is a standing
+// balance, and posting it whole each period would accumulate the same
+// obligation over and over. When the measured total has not moved, nothing is
+// posted and the valuation is still recorded, so a period with no change is
+// distinguishable from a period nobody valued.
+//
+// Employees with a balance and no rate are reported rather than dropped. Their
+// leave is owed and unmeasured, and a total that quietly excludes them would
+// read as complete.
+func (s *Service) ValueLeaveLiability(ctx context.Context, year int, valuedAt time.Time) (*LeaveValuation, error) {
+	if year <= 0 {
+		year = valuedAt.Year()
+	}
+	measured, err := s.repo.MeasureLeaveLiability(ctx, year)
+	if err != nil {
+		return nil, err
+	}
+	previous, err := s.repo.LastLeaveValuationTotal(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	out := &LeaveValuation{
+		ValuedAt:         valuedAt.UTC().Truncate(24 * time.Hour),
+		TotalLiability:   measured.Total,
+		Movement:         measured.Total.Sub(previous),
+		EmployeesValued:  measured.EmployeesValued,
+		EmployeesUnrated: measured.EmployeesUnrated,
+	}
+
+	if !out.Movement.IsZero() {
+		amt := out.Movement.Abs()
+		memo := "Accrued leave valuation " + out.ValuedAt.Format("2006-01-02")
+		var lines []LineInput
+		if out.Movement.IsPositive() {
+			lines = []LineInput{
+				{AccountCode: acctSalaryExpense, Debit: amt, Memo: memo},
+				{AccountCode: acctAccruedLeave, Credit: amt, Memo: memo},
+			}
+		} else {
+			lines = []LineInput{
+				{AccountCode: acctAccruedLeave, Debit: amt, Memo: memo},
+				{AccountCode: acctSalaryExpense, Credit: amt, Memo: memo},
+			}
+		}
+		sourceEventID := "leave-valuation:" + out.ValuedAt.Format("2006-01-02")
+		sourceService := "payroll"
+		entry, err := s.CreateJournalEntry(ctx, CreateEntryInput{
+			Description:   memo,
+			Lines:         lines,
+			SourceEventID: &sourceEventID,
+			SourceService: &sourceService,
+		})
+		if err != nil {
+			return nil, err
+		}
+		posted, err := s.PostJournalEntry(ctx, entry.ID, "system:payroll")
+		if err != nil {
+			return nil, err
+		}
+		out.JournalEntryID = &posted.ID
+	}
+
+	if err := s.repo.RecordLeaveValuation(ctx, repository.LeaveValuationParams{
+		ValuedAt:         out.ValuedAt,
+		TotalLiability:   out.TotalLiability.StringFixed(2),
+		Movement:         out.Movement.StringFixed(2),
+		Currency:         "UGX",
+		EmployeesValued:  out.EmployeesValued,
+		EmployeesUnrated: out.EmployeesUnrated,
+		JournalEntryID:   out.JournalEntryID,
+	}); err != nil {
+		return nil, err
+	}
+	return out, nil
 }
