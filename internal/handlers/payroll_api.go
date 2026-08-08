@@ -262,3 +262,35 @@ func (a *API) ValueLeaveLiability(c *gin.Context) {
 			"unrated":        out.EmployeesUnrated,
 		})
 }
+
+// ListLeaveBalances shows the days HR reports as owed, joined to the rate each
+// would be valued at. A balance with no rate appears with a null value rather
+// than being hidden — it is an obligation nobody can measure, and this is where
+// that should be visible.
+func (a *API) ListLeaveBalances(c *gin.Context) {
+	if a.Repo == nil {
+		apierr.JSONStatus(c, http.StatusServiceUnavailable, "payroll mirror unavailable")
+		return
+	}
+	year, _ := strconv.Atoi(strings.TrimSpace(c.Query("year")))
+	items, err := a.Repo.ListLeaveBalances(c.Request.Context(), year, payrollQueryLimit(c, 200))
+	if err != nil {
+		apierr.JSONStatus(c, http.StatusInternalServerError, "could not list leave balances")
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"items": items, "source": "iag-erp-events"})
+}
+
+// ListLeaveValuations shows what the liability was measured at and when.
+func (a *API) ListLeaveValuations(c *gin.Context) {
+	if a.Repo == nil {
+		apierr.JSONStatus(c, http.StatusServiceUnavailable, "payroll mirror unavailable")
+		return
+	}
+	items, err := a.Repo.ListLeaveValuations(c.Request.Context(), payrollQueryLimit(c, 100))
+	if err != nil {
+		apierr.JSONStatus(c, http.StatusInternalServerError, "could not list leave valuations")
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"items": items})
+}

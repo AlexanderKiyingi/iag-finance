@@ -135,3 +135,88 @@ func (r *Repository) RecordLeaveValuation(ctx context.Context, in LeaveValuation
 		in.EmployeesValued, in.EmployeesUnrated, in.JournalEntryID)
 	return err
 }
+
+// LeaveBalanceRow is a reported balance with the rate it would be valued at.
+type LeaveBalanceRow struct {
+	EmployeeNo    string  `json:"employeeNo"`
+	LeaveTypeCode string  `json:"leaveTypeCode"`
+	AccrualYear   int     `json:"accrualYear"`
+	BalanceDays   string  `json:"balanceDays"`
+	DailyRate     *string `json:"dailyRate,omitempty"`
+	Value         *string `json:"value,omitempty"`
+	Currency      string  `json:"currency,omitempty"`
+}
+
+// ListLeaveBalances returns reported balances joined to their rate.
+//
+// A balance with no rate comes back with a null rate and value rather than
+// being hidden: it is an obligation nobody can measure, and the list is where
+// that should be visible.
+func (r *Repository) ListLeaveBalances(ctx context.Context, year int, limit int) ([]LeaveBalanceRow, error) {
+	if limit <= 0 || limit > 1000 {
+		limit = 200
+	}
+	rows, err := r.pool.Query(ctx, `
+		SELECT b.employee_no, b.leave_type_code, b.accrual_year, b.balance_days::text,
+		       rt.daily_rate::text,
+		       CASE WHEN rt.daily_rate IS NULL THEN NULL
+		            ELSE (b.balance_days * rt.daily_rate)::text END,
+		       COALESCE(rt.currency, '')
+		FROM payroll_leave_balances b
+		LEFT JOIN payroll_employee_rates rt ON rt.employee_no = b.employee_no
+		WHERE ($1 = 0 OR b.accrual_year = $1)
+		ORDER BY b.employee_no, b.leave_type_code
+		LIMIT $2`, year, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []LeaveBalanceRow{}
+	for rows.Next() {
+		var b LeaveBalanceRow
+		if err := rows.Scan(&b.EmployeeNo, &b.LeaveTypeCode, &b.AccrualYear,
+			&b.BalanceDays, &b.DailyRate, &b.Value, &b.Currency); err != nil {
+			return nil, err
+		}
+		out = append(out, b)
+	}
+	return out, rows.Err()
+}
+
+// LeaveValuationRow is a booked valuation.
+type LeaveValuationRow struct {
+	ValuedAt         time.Time  `json:"valuedAt"`
+	TotalLiability   string     `json:"totalLiability"`
+	Movement         string     `json:"movement"`
+	Currency         string     `json:"currency"`
+	EmployeesValued  int        `json:"employeesValued"`
+	EmployeesUnrated int        `json:"employeesUnrated"`
+	JournalEntryID   *uuid.UUID `json:"journalEntryId,omitempty"`
+}
+
+// ListLeaveValuations returns booked valuations, newest first.
+func (r *Repository) ListLeaveValuations(ctx context.Context, limit int) ([]LeaveValuationRow, error) {
+	if limit <= 0 || limit > 500 {
+		limit = 100
+	}
+	rows, err := r.pool.Query(ctx, `
+		SELECT valued_at, total_liability::text, movement::text, currency,
+		       employees_valued, employees_unrated, journal_entry_id
+		FROM payroll_leave_valuations
+		ORDER BY valued_at DESC
+		LIMIT $1`, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []LeaveValuationRow{}
+	for rows.Next() {
+		var v LeaveValuationRow
+		if err := rows.Scan(&v.ValuedAt, &v.TotalLiability, &v.Movement, &v.Currency,
+			&v.EmployeesValued, &v.EmployeesUnrated, &v.JournalEntryID); err != nil {
+			return nil, err
+		}
+		out = append(out, v)
+	}
+	return out, rows.Err()
+}
