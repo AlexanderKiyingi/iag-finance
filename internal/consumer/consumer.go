@@ -12,6 +12,7 @@ import (
 	"github.com/iag-finance/backend/internal/auditlog"
 	"github.com/iag-finance/backend/internal/domain"
 	"github.com/iag-finance/backend/internal/ledger"
+	"github.com/iag-finance/backend/internal/repository"
 )
 
 // Config controls one Kafka subscription.
@@ -192,7 +193,35 @@ func (h *financeHandler) handleFleetFuelRecorded(ctx context.Context, env platfo
 	if data.VehicleID != "" {
 		desc += " (" + data.VehicleID + ")"
 	}
-	entry, err := h.ledger.BookFromEvent(ctx, env.ID, env.Type, env.Source, env.CorrelationID, desc, data.Currency, []ledger.LineInput{
+	// The payable is created before the journal, so the link below has
+	// something to find.
+	//
+	// This handler used to book Cr 2000 and then link to an AP item that nothing
+	// ever created: LinkAPOpenItemByDocumentRef is an UPDATE, so it matched zero
+	// rows and reported success. The liability sat in the general ledger and was
+	// invisible to the AP subledger — absent from aged payables, with no vendor
+	// to pay, and leaving a permanent difference on the 2000 control account.
+	//
+	// Fleet is the only system that knows about fuel drawn at a station, so the
+	// payable is real and belongs here. Fuel routed through procurement instead
+	// travels a different event (fleet.fuel.request_approved → a requisition),
+	// and if that route later produces its own invoice the two payables are now
+	// both visible rather than one hiding in the GL.
+	currency := data.Currency
+	if strings.TrimSpace(currency) == "" {
+		currency = "UGX"
+	}
+	if data.DocumentRef != "" {
+		_, err := h.ledger.CreateAPItem(ctx, strings.TrimSpace(data.VendorRef),
+			data.DocumentRef, desc, data.Amount, currency, nil, nil)
+		// A replay finds the item already there; document_ref is unique, which
+		// is what makes re-delivery safe.
+		if err != nil && !repository.IsUniqueViolation(err) {
+			return err
+		}
+	}
+
+	entry, err := h.ledger.BookFromEvent(ctx, env.ID, env.Type, env.Source, env.CorrelationID, desc, currency, []ledger.LineInput{
 		{AccountCode: "5000", Debit: amount, Memo: "Fleet fuel expense"},
 		{AccountCode: "2000", Credit: amount, Memo: "AP / fuel payable"},
 	})
