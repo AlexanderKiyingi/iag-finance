@@ -86,6 +86,10 @@
       "description": "Submit invoices to URA EFRIS (tax authority filing)"
     },
     {
+      "codename": "finance.ingest_pos",
+      "description": "Post point-of-sale takings into the ledger (machine account for the POS backend)"
+    },
+    {
       "codename": "finance.manage_entities",
       "description": "Create/manage accounting entities"
     },
@@ -152,6 +156,14 @@
       "path": "/integrations/ura-efris/submit",
       "permissions": [
         "finance.submit_efris",
+        "finance.change_ledger"
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/pos/receipts",
+      "permissions": [
+        "finance.ingest_pos",
         "finance.change_ledger"
       ]
     },

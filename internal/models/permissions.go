@@ -36,6 +36,7 @@ func PermissionDescriptors() []PermissionDescriptor {
 		{Name: "finance.manage_fx", Description: "Manage exchange rates and run FX revaluation"},
 		{Name: "finance.manage_tax", Description: "Manage VAT/GST tax codes"},
 		{Name: "finance.submit_efris", Description: "Submit invoices to URA EFRIS (tax authority filing)"},
+		{Name: "finance.ingest_pos", Description: "Post point-of-sale takings into the ledger (machine account for the POS backend)"},
 		{Name: "finance.manage_entities", Description: "Create/manage accounting entities"},
 		{Name: "finance.manage_budgets", Description: "Set budgets"},
 		{Name: "finance.manage_dimensions", Description: "Manage projects and cost centres"},

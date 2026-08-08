@@ -32,6 +32,9 @@ func RouteGates() []RouteGate {
 	return []RouteGate{
 		// Integrations
 		{"POST", "/integrations/ura-efris/submit", granular("finance.submit_efris")},
+		// POS takings. A dedicated permission because the caller is a machine
+		// account for the till backend, not a person with ledger rights.
+		{"POST", "/pos/receipts", granular("finance.ingest_pos")},
 		{"POST", "/integrations/banking/statements", granular("finance.manage_banking")},
 		{"POST", "/integrations/banking/statements/:id/reconcile/auto", granular("finance.manage_banking")},
 		{"POST", "/integrations/banking/lines/:lineId/match", granular("finance.manage_banking")},

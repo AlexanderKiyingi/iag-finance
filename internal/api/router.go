@@ -120,6 +120,9 @@ func NewRouter(deps RouterDeps) *gin.Engine {
 		// Integrations
 		v1.GET("/integrations/ura-efris", ledgerRead, api.URAStatus)
 		w.POST("/integrations/ura-efris/submit", api.SubmitEFRIS)
+
+		// POS ingest — no POS service exists, so the till backend posts here.
+		w.POST("/pos/receipts", api.IngestPOSReceipts)
 		v1.GET("/integrations/banking", ledgerRead, api.BankingStatus)
 		w.POST("/integrations/banking/statements", api.ImportBankStatement)
 		v1.GET("/integrations/banking/statements/:id/lines", ledgerRead, api.ListStatementLines)
