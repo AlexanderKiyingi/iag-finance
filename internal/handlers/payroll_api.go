@@ -4,6 +4,7 @@ import (
 	"errors"
 	"net/http"
 	"strconv"
+	"strings"
 
 	"github.com/gin-gonic/gin"
 	"github.com/shopspring/decimal"
@@ -144,4 +145,70 @@ func payrollQueryLimit(c *gin.Context, def int) int {
 		return 500
 	}
 	return limit
+}
+
+type postLeaveProvisionRequest struct {
+	ProvisionRef string `json:"provisionRef" binding:"required"`
+	Period       string `json:"period" binding:"required"`
+	// Amount is the signed movement in the liability, not a closing balance.
+	Amount   string `json:"amount" binding:"required"`
+	Currency string `json:"currency"`
+	Note     string `json:"note"`
+}
+
+// PostLeaveProvision books a movement in the accrued-leave liability.
+//
+// The figure is stated by whoever calculates payroll, the same way payroll
+// totals are: HR reports leave taken but never the balance earned, and no
+// service holds a pay rate, so the platform cannot compute it yet. provisionRef
+// makes a restated period idempotent rather than cumulative.
+func (a *API) PostLeaveProvision(c *gin.Context) {
+	var req postLeaveProvisionRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		apierr.JSONStatus(c, http.StatusBadRequest, err.Error())
+		return
+	}
+	if !periodRE.MatchString(req.Period) {
+		apierr.JSONStatus(c, http.StatusBadRequest, "period must be in YYYY-MM format")
+		return
+	}
+	amount, err := decimal.NewFromString(strings.TrimSpace(req.Amount))
+	if err != nil {
+		apierr.JSONStatus(c, http.StatusBadRequest, "amount must be a decimal number")
+		return
+	}
+
+	prov, err := a.Ledger.PostLeaveProvision(c.Request.Context(), ledger.LeaveProvisionInput{
+		ProvisionRef: strings.TrimSpace(req.ProvisionRef),
+		Period:       req.Period,
+		Amount:       amount,
+		Currency:     strings.TrimSpace(req.Currency),
+		Note:         strings.TrimSpace(req.Note),
+	})
+	if err != nil {
+		status := http.StatusInternalServerError
+		switch {
+		case errors.Is(err, ledger.ErrLeaveProvisionZero), errors.Is(err, ledger.ErrPeriodClosed),
+			errors.Is(err, ledger.ErrAccountNotFound):
+			status = http.StatusUnprocessableEntity
+		}
+		apierr.JSONStatus(c, status, err.Error())
+		return
+	}
+	c.JSON(http.StatusCreated, prov)
+	logBusinessEvent(c, a.Audit, auditlog.EventPayrollRunPosted, "leave_provision", prov.ProvisionRef,
+		http.StatusCreated, map[string]any{
+			"period": prov.Period, "amount": prov.Amount, "journalEntryId": prov.JournalEntryID,
+		})
+}
+
+// ListLeaveProvisions returns booked provisions, newest first.
+func (a *API) ListLeaveProvisions(c *gin.Context) {
+	items, err := a.Ledger.ListLeaveProvisions(c.Request.Context(),
+		strings.TrimSpace(c.Query("period")), payrollQueryLimit(c, 100))
+	if err != nil {
+		apierr.JSONStatus(c, http.StatusInternalServerError, "could not list leave provisions")
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"items": items})
 }

@@ -112,3 +112,104 @@ func (s *Service) PostPayrollRun(ctx context.Context, in PayrollRunInput) (*repo
 func (s *Service) ListPayrollRuns(ctx context.Context, limit int) ([]repository.PayrollRun, error) {
 	return s.repo.ListPayrollRuns(ctx, limit)
 }
+
+// acctAccruedLeave is the liability for leave earned and not yet taken.
+const acctAccruedLeave = "2240"
+
+// ErrLeaveProvisionZero rejects a provision that would book nothing.
+var ErrLeaveProvisionZero = errors.New("leave provision amount must not be zero")
+
+// LeaveProvisionInput is a stated movement in the accrued-leave liability.
+type LeaveProvisionInput struct {
+	ProvisionRef string
+	Period       string // YYYY-MM
+	// Amount is the change in the liability, signed: positive accrues more
+	// leave than was taken, negative means leave was consumed faster than it
+	// was earned. It is deliberately not a closing balance — booking a balance
+	// would re-post the whole obligation every period it did not move.
+	Amount   decimal.Decimal
+	Currency string
+	Note     string
+}
+
+// PostLeaveProvision books a movement in the accrued-leave liability:
+//
+//	increase → Dr Salary & Wages Expense / Cr Accrued Leave
+//	decrease → Dr Accrued Leave          / Cr Salary & Wages Expense
+//
+// The expense side is the account payroll already uses, so staff cost stays on
+// one line rather than being split for no reporting benefit.
+//
+// This is an operator assertion, like the payroll totals beside it: HR reports
+// leave taken but never the balance earned, and no service holds a pay rate to
+// value a day with, so the platform cannot compute this figure yet. Whoever
+// calculates payroll states it, and provision_ref makes the statement idempotent.
+//
+// Posting respects the fiscal-period close control, so a provision cannot be
+// booked into a closed period.
+func (s *Service) PostLeaveProvision(ctx context.Context, in LeaveProvisionInput) (*repository.LeaveProvision, error) {
+	if in.ProvisionRef == "" || in.Period == "" {
+		return nil, errors.New("leave provision requires provisionRef and period")
+	}
+	if in.Amount.IsZero() {
+		return nil, ErrLeaveProvisionZero
+	}
+
+	// Idempotency: a provision is booked exactly once. A repeat returns the
+	// original rather than doubling the liability.
+	if existing, err := s.repo.GetLeaveProvisionByRef(ctx, in.ProvisionRef); err != nil {
+		return nil, err
+	} else if existing != nil {
+		return existing, nil
+	}
+
+	currency := in.Currency
+	if currency == "" {
+		currency = "UGX"
+	}
+
+	amt := in.Amount.Abs()
+	memo := "Accrued leave " + in.Period
+	var lines []LineInput
+	if in.Amount.IsPositive() {
+		lines = []LineInput{
+			{AccountCode: acctSalaryExpense, Debit: amt, Memo: memo},
+			{AccountCode: acctAccruedLeave, Credit: amt, Memo: memo},
+		}
+	} else {
+		lines = []LineInput{
+			{AccountCode: acctAccruedLeave, Debit: amt, Memo: memo},
+			{AccountCode: acctSalaryExpense, Credit: amt, Memo: memo},
+		}
+	}
+
+	sourceEventID := "leave-provision:" + in.ProvisionRef
+	sourceService := "payroll"
+	entry, err := s.CreateJournalEntry(ctx, CreateEntryInput{
+		Description:   "Leave provision " + in.ProvisionRef + " (" + in.Period + ")",
+		Lines:         lines,
+		SourceEventID: &sourceEventID,
+		SourceService: &sourceService,
+	})
+	if err != nil {
+		return nil, err
+	}
+	posted, err := s.PostJournalEntry(ctx, entry.ID, "system:payroll")
+	if err != nil {
+		return nil, err
+	}
+
+	return s.repo.RecordLeaveProvision(ctx, repository.LeaveProvisionParams{
+		ProvisionRef:   in.ProvisionRef,
+		Period:         in.Period,
+		Amount:         in.Amount.StringFixed(2),
+		Currency:       currency,
+		Note:           in.Note,
+		JournalEntryID: posted.ID,
+	})
+}
+
+// ListLeaveProvisions returns booked provisions, newest first.
+func (s *Service) ListLeaveProvisions(ctx context.Context, period string, limit int) ([]repository.LeaveProvision, error) {
+	return s.repo.ListLeaveProvisions(ctx, period, limit)
+}

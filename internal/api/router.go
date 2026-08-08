@@ -300,6 +300,11 @@ func NewRouter(deps RouterDeps) *gin.Engine {
 		v1.GET("/payroll/leave-accruals", viewPayroll, api.ListPayrollLeaveAccruals)
 		v1.GET("/payroll/runs", ledgerRead, api.ListPayrollRuns)
 		w.POST("/payroll/runs", api.PostPayrollRun)
+		// Accrued leave. The figure is stated, not computed — see
+		// docs/planning/LEAVE_LIABILITY_PLAN.md for why the platform cannot
+		// derive it yet.
+		v1.GET("/payroll/leave-provisions", viewPayroll, api.ListLeaveProvisions)
+		w.POST("/payroll/leave-provisions", api.PostLeaveProvision)
 
 		v1.GET("/portal/me", middleware.RequirePortalAP(), api.PortalMe)
 		v1.GET("/portal/ap", middleware.RequirePortalAP(), api.PortalAP)

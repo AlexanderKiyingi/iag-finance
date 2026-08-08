@@ -149,6 +149,7 @@ func RouteGates() []RouteGate {
 
 		// Payroll
 		{"POST", "/payroll/runs", ledgerWrite()},
+		{"POST", "/payroll/leave-provisions", ledgerWrite()},
 
 		// Ops audit / prototype tables
 		{"POST", "/audit/events", opsWrite()},

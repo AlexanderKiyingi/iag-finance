@@ -841,6 +841,14 @@
     },
     {
       "method": "POST",
+      "path": "/payroll/leave-provisions",
+      "permissions": [
+        "finance.change_ledger",
+        "finance.change_operations"
+      ]
+    },
+    {
+      "method": "POST",
       "path": "/audit/events",
       "permissions": [
         "finance.change_operations",
