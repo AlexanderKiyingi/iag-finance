@@ -118,22 +118,55 @@ type LeaveValuationParams struct {
 	JournalEntryID   *uuid.UUID
 }
 
-// RecordLeaveValuation stores a valuation. One per date: re-running a day
-// replaces it rather than stacking movements on the same closing figure.
+const recordLeaveValuationSQL = `
+	INSERT INTO payroll_leave_valuations
+		(valued_at, total_liability, movement, currency, employees_valued, employees_unrated, journal_entry_id)
+	VALUES ($1, $2::numeric, $3::numeric, $4, $5, $6, $7)
+	ON CONFLICT (valued_at) DO UPDATE
+	SET total_liability = EXCLUDED.total_liability,
+	    movement = EXCLUDED.movement,
+	    employees_valued = EXCLUDED.employees_valued,
+	    employees_unrated = EXCLUDED.employees_unrated,
+	    journal_entry_id = EXCLUDED.journal_entry_id`
+
+// RecordLeaveValuation stores a valuation that booked no journal.
 func (r *Repository) RecordLeaveValuation(ctx context.Context, in LeaveValuationParams) error {
-	_, err := r.pool.Exec(ctx, `
-		INSERT INTO payroll_leave_valuations
-			(valued_at, total_liability, movement, currency, employees_valued, employees_unrated, journal_entry_id)
-		VALUES ($1, $2::numeric, $3::numeric, $4, $5, $6, $7)
-		ON CONFLICT (valued_at) DO UPDATE
-		SET total_liability = EXCLUDED.total_liability,
-		    movement = EXCLUDED.movement,
-		    employees_valued = EXCLUDED.employees_valued,
-		    employees_unrated = EXCLUDED.employees_unrated,
-		    journal_entry_id = EXCLUDED.journal_entry_id`,
+	_, err := r.pool.Exec(ctx, recordLeaveValuationSQL,
 		in.ValuedAt, in.TotalLiability, in.Movement, in.Currency,
 		in.EmployeesValued, in.EmployeesUnrated, in.JournalEntryID)
 	return err
+}
+
+// RecordLeaveValuationTx stores a valuation inside the transaction that books
+// its journal, so the record and the posting commit together.
+//
+// Recording separately was a real gap: a failure after the journal posted left
+// the ledger carrying a movement the valuation table had no row for, and the
+// next run measured its movement against a stale previous total.
+func RecordLeaveValuationTx(ctx context.Context, tx pgx.Tx, in LeaveValuationParams) error {
+	_, err := tx.Exec(ctx, recordLeaveValuationSQL,
+		in.ValuedAt, in.TotalLiability, in.Movement, in.Currency,
+		in.EmployeesValued, in.EmployeesUnrated, in.JournalEntryID)
+	return err
+}
+
+// GetLeaveValuation returns the valuation booked for a date, or nil if the date
+// has not been valued.
+func (r *Repository) GetLeaveValuation(ctx context.Context, valuedAt time.Time) (*LeaveValuationRow, error) {
+	var v LeaveValuationRow
+	err := r.pool.QueryRow(ctx, `
+		SELECT valued_at, total_liability::text, movement::text, currency,
+		       employees_valued, employees_unrated, journal_entry_id
+		FROM payroll_leave_valuations WHERE valued_at = $1`, valuedAt).
+		Scan(&v.ValuedAt, &v.TotalLiability, &v.Movement, &v.Currency,
+			&v.EmployeesValued, &v.EmployeesUnrated, &v.JournalEntryID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	return &v, nil
 }
 
 // LeaveBalanceRow is a reported balance with the rate it would be valued at.

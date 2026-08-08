@@ -3,9 +3,10 @@ package ledger
 import (
 	"context"
 	"errors"
-	"github.com/google/uuid"
 	"time"
 
+	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 	"github.com/shopspring/decimal"
 
 	"github.com/iag-finance/backend/internal/repository"
@@ -238,10 +239,24 @@ type LeaveValuation struct {
 // Employees with a balance and no rate are reported rather than dropped. Their
 // leave is owed and unmeasured, and a total that quietly excludes them would
 // read as complete.
+//
+// A date is valued once. Re-running one returns what was booked rather than
+// measuring again: the movement was posted against the total as it stood, and
+// the ledger will not accept a second entry for the same date. A balance
+// corrected afterwards is not backdated — it flows through the next valuation's
+// movement, which is how a standing accrual is meant to behave.
 func (s *Service) ValueLeaveLiability(ctx context.Context, year int, valuedAt time.Time) (*LeaveValuation, error) {
 	if year <= 0 {
 		year = valuedAt.Year()
 	}
+	day := valuedAt.UTC().Truncate(24 * time.Hour)
+
+	if booked, err := s.repo.GetLeaveValuation(ctx, day); err != nil {
+		return nil, err
+	} else if booked != nil {
+		return leaveValuationFromRow(booked)
+	}
+
 	measured, err := s.repo.MeasureLeaveLiability(ctx, year)
 	if err != nil {
 		return nil, err
@@ -252,56 +267,107 @@ func (s *Service) ValueLeaveLiability(ctx context.Context, year int, valuedAt ti
 	}
 
 	out := &LeaveValuation{
-		ValuedAt:         valuedAt.UTC().Truncate(24 * time.Hour),
+		ValuedAt:         day,
 		TotalLiability:   measured.Total,
 		Movement:         measured.Total.Sub(previous),
 		EmployeesValued:  measured.EmployeesValued,
 		EmployeesUnrated: measured.EmployeesUnrated,
 	}
 
-	if !out.Movement.IsZero() {
-		amt := out.Movement.Abs()
-		memo := "Accrued leave valuation " + out.ValuedAt.Format("2006-01-02")
-		var lines []LineInput
-		if out.Movement.IsPositive() {
-			lines = []LineInput{
-				{AccountCode: acctSalaryExpense, Debit: amt, Memo: memo},
-				{AccountCode: acctAccruedLeave, Credit: amt, Memo: memo},
-			}
-		} else {
-			lines = []LineInput{
-				{AccountCode: acctAccruedLeave, Debit: amt, Memo: memo},
-				{AccountCode: acctSalaryExpense, Credit: amt, Memo: memo},
-			}
-		}
-		sourceEventID := "leave-valuation:" + out.ValuedAt.Format("2006-01-02")
-		sourceService := "payroll"
-		entry, err := s.CreateJournalEntry(ctx, CreateEntryInput{
-			Description:   memo,
-			Lines:         lines,
-			SourceEventID: &sourceEventID,
-			SourceService: &sourceService,
-		})
-		if err != nil {
-			return nil, err
-		}
-		posted, err := s.PostJournalEntry(ctx, entry.ID, "system:payroll")
-		if err != nil {
-			return nil, err
-		}
-		out.JournalEntryID = &posted.ID
-	}
-
-	if err := s.repo.RecordLeaveValuation(ctx, repository.LeaveValuationParams{
+	// The reporting currency is the ledger's own, not a constant. This was
+	// hardcoded to UGX, which silently mislabels the liability on any deployment
+	// whose books are kept in something else.
+	params := repository.LeaveValuationParams{
 		ValuedAt:         out.ValuedAt,
 		TotalLiability:   out.TotalLiability.StringFixed(2),
 		Movement:         out.Movement.StringFixed(2),
-		Currency:         "UGX",
+		Currency:         s.repo.BaseCurrency(),
 		EmployeesValued:  out.EmployeesValued,
 		EmployeesUnrated: out.EmployeesUnrated,
-		JournalEntryID:   out.JournalEntryID,
-	}); err != nil {
+	}
+
+	if out.Movement.IsZero() {
+		// Nothing to post, but the date is still recorded so a period with no
+		// change stays distinguishable from one nobody valued.
+		if err := s.repo.RecordLeaveValuation(ctx, params); err != nil {
+			return nil, err
+		}
+		return out, nil
+	}
+
+	amt := out.Movement.Abs()
+	memo := "Accrued leave valuation " + out.ValuedAt.Format("2006-01-02")
+	var lines []LineInput
+	if out.Movement.IsPositive() {
+		lines = []LineInput{
+			{AccountCode: acctSalaryExpense, Debit: amt, Memo: memo},
+			{AccountCode: acctAccruedLeave, Credit: amt, Memo: memo},
+		}
+	} else {
+		lines = []LineInput{
+			{AccountCode: acctAccruedLeave, Debit: amt, Memo: memo},
+			{AccountCode: acctSalaryExpense, Credit: amt, Memo: memo},
+		}
+	}
+	resolved, err := s.resolveLines(ctx, lines)
+	if err != nil {
 		return nil, err
 	}
+	// A valuation posts on its own date, which may be backdated, so the closed
+	// period has to be checked against that date rather than today.
+	if closed, err := s.repo.IsPeriodClosed(ctx, out.ValuedAt.Format("2006-01")); err != nil {
+		return nil, err
+	} else if closed {
+		return nil, ErrPeriodClosed
+	}
+
+	sourceEventID := "leave-valuation:" + out.ValuedAt.Format("2006-01-02")
+	sourceService := "payroll"
+	// The valuation record is written inside the journal's transaction, so the
+	// posting and the record of it commit together or not at all. Splitting them
+	// left the ledger carrying a movement the valuation table had no row for,
+	// and the next run then measured against a stale previous total.
+	side := func(ctx context.Context, tx pgx.Tx, entryID uuid.UUID) error {
+		p := params
+		p.JournalEntryID = &entryID
+		return repository.RecordLeaveValuationTx(ctx, tx, p)
+	}
+	entry, err := s.repo.BookPostedEntry(ctx, repository.CreateJournalParams{
+		Description:   memo,
+		SourceEventID: &sourceEventID,
+		SourceService: &sourceService,
+		Currency:      params.Currency,
+		Lines:         resolved,
+	}, sourceEventID, "payroll.leave.valued", out.ValuedAt, side, &repository.AuditInfo{
+		Actor:     "system:payroll",
+		EventType: "ledger.leave.valued",
+		Message:   memo,
+	})
+	if err != nil {
+		return nil, err
+	}
+	out.JournalEntryID = &entry.ID
 	return out, nil
+}
+
+// leaveValuationFromRow rebuilds a valuation from the row that was booked, so a
+// repeated request for a valued date answers with what is in the ledger instead
+// of a fresh measurement that could not be posted anyway.
+func leaveValuationFromRow(row *repository.LeaveValuationRow) (*LeaveValuation, error) {
+	total, err := decimal.NewFromString(row.TotalLiability)
+	if err != nil {
+		return nil, err
+	}
+	movement, err := decimal.NewFromString(row.Movement)
+	if err != nil {
+		return nil, err
+	}
+	return &LeaveValuation{
+		ValuedAt:         row.ValuedAt,
+		TotalLiability:   total,
+		Movement:         movement,
+		EmployeesValued:  row.EmployeesValued,
+		EmployeesUnrated: row.EmployeesUnrated,
+		JournalEntryID:   row.JournalEntryID,
+	}, nil
 }

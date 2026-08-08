@@ -2,8 +2,12 @@ package ledger
 
 import (
 	"testing"
+	"time"
 
+	"github.com/google/uuid"
 	"github.com/shopspring/decimal"
+
+	"github.com/iag-finance/backend/internal/repository"
 )
 
 // The leave provision books a signed movement, so the direction is where it can
@@ -103,5 +107,75 @@ func TestLeaveProvisionExpensesToTheSameAccountAsPayroll(t *testing.T) {
 		if l.AccountCode != acctSalaryExpense && l.AccountCode != acctAccruedLeave {
 			t.Errorf("provision touched %s; it should only move between salary expense and accrued leave", l.AccountCode)
 		}
+	}
+}
+
+// A date is valued once. Re-running one now answers from the row that was
+// booked instead of measuring again — the ledger would refuse a second entry
+// for the same date anyway, and the old code turned that refusal into a 500.
+// The rebuild parses numerics that arrive as text, so it is worth pinning.
+
+func TestValuationRebuildKeepsWhatWasBooked(t *testing.T) {
+	id := uuid.New()
+	row := &repository.LeaveValuationRow{
+		ValuedAt:         time.Date(2026, 7, 31, 0, 0, 0, 0, time.UTC),
+		TotalLiability:   "1250.75",
+		Movement:         "-99.25",
+		EmployeesValued:  12,
+		EmployeesUnrated: 3,
+		JournalEntryID:   &id,
+	}
+	got, err := leaveValuationFromRow(row)
+	if err != nil {
+		t.Fatalf("rebuilding a booked valuation: %v", err)
+	}
+	if got.TotalLiability.String() != "1250.75" {
+		t.Errorf("total = %s, want 1250.75", got.TotalLiability)
+	}
+	// The sign carries the direction of the posting; losing it would report a
+	// release of the liability as a further accrual.
+	if got.Movement.String() != "-99.25" {
+		t.Errorf("movement = %s, want -99.25", got.Movement)
+	}
+	if got.JournalEntryID == nil || *got.JournalEntryID != id {
+		t.Error("the journal that was posted is not carried back to the caller")
+	}
+	if got.EmployeesUnrated != 3 {
+		t.Errorf("unrated employees = %d, want 3", got.EmployeesUnrated)
+	}
+	if !got.ValuedAt.Equal(row.ValuedAt) {
+		t.Errorf("valuedAt = %s, want %s", got.ValuedAt, row.ValuedAt)
+	}
+}
+
+// A valuation with no journal is a real state: a period whose measured total
+// did not move is recorded so it stays distinguishable from one nobody valued.
+func TestValuationRebuildAllowsAPeriodThatBookedNothing(t *testing.T) {
+	got, err := leaveValuationFromRow(&repository.LeaveValuationRow{
+		TotalLiability: "500", Movement: "0",
+	})
+	if err != nil {
+		t.Fatalf("rebuilding an unposted valuation: %v", err)
+	}
+	if got.JournalEntryID != nil {
+		t.Error("a valuation that posted nothing should carry no journal id")
+	}
+	if !got.Movement.IsZero() {
+		t.Errorf("movement = %s, want zero", got.Movement)
+	}
+}
+
+// An unreadable figure must surface. Collapsing it to zero would report a
+// liability of nothing and book the whole balance again on the next run.
+func TestValuationRebuildRefusesAnUnreadableFigure(t *testing.T) {
+	if _, err := leaveValuationFromRow(&repository.LeaveValuationRow{
+		TotalLiability: "1,250.75", Movement: "0",
+	}); err == nil {
+		t.Error("an unparseable total was accepted; it must be reported")
+	}
+	if _, err := leaveValuationFromRow(&repository.LeaveValuationRow{
+		TotalLiability: "500", Movement: "n/a",
+	}); err == nil {
+		t.Error("an unparseable movement was accepted; it must be reported")
 	}
 }
