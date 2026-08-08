@@ -294,3 +294,27 @@ func (a *API) ListLeaveValuations(c *gin.Context) {
 	}
 	c.JSON(http.StatusOK, gin.H{"items": items})
 }
+
+// ListOrphanedAPJournals reports journals that credit the payables control
+// account with nothing in the AP subledger against them.
+//
+// A payable in that state is invisible: absent from aged payables, with no
+// vendor to pay, and leaving an unexplained difference on the control account.
+// Every fleet fuel record booked before finance created the payable is in it.
+//
+// This reports rather than repairs. The vendor is not recoverable from a
+// journal — it lives in the system that raised the cost — so an automated fix
+// would produce payables that balance the control account and still cannot be
+// paid to anyone.
+func (a *API) ListOrphanedAPJournals(c *gin.Context) {
+	if a.Repo == nil {
+		apierr.JSONStatus(c, http.StatusServiceUnavailable, "repository unavailable")
+		return
+	}
+	items, summary, err := a.Repo.ListOrphanedAPJournals(c.Request.Context(), payrollQueryLimit(c, 200))
+	if err != nil {
+		apierr.JSONStatus(c, http.StatusInternalServerError, "could not list orphaned AP journals")
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"items": items, "summary": summary})
+}

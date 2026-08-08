@@ -27,8 +27,8 @@ import (
 	"github.com/iag-finance/backend/internal/events"
 	"github.com/iag-finance/backend/internal/integrations"
 	"github.com/iag-finance/backend/internal/models"
-	"github.com/iag-finance/backend/internal/worker"
 	"github.com/iag-finance/backend/internal/repository"
+	"github.com/iag-finance/backend/internal/worker"
 )
 
 func main() {
@@ -174,7 +174,7 @@ func main() {
 			GroupID:  cfg.KafkaGroupID,
 			Topic:    cfg.KafkaTopic,
 			DLQTopic: cfg.KafkaDLQTopic,
-		}, ledgerSvc, auditSvc, dlqProducer)
+		}, ledgerSvc, auditSvc, eventBus, dlqProducer)
 		if err != nil {
 			log.Fatal("finance consumer: ", err)
 		}
@@ -188,7 +188,7 @@ func main() {
 			GroupID:  "iag.finance.fleet",
 			Topic:    "iag.fleet",
 			DLQTopic: cfg.KafkaDLQTopic,
-		}, ledgerSvc, auditSvc, dlqProducer)
+		}, ledgerSvc, auditSvc, eventBus, dlqProducer)
 		if err != nil {
 			log.Fatal("finance fleet consumer: ", err)
 		}
@@ -249,7 +249,7 @@ func main() {
 			GroupID:  "iag.finance.payments",
 			Topic:    cfg.KafkaPaymentsTopic,
 			DLQTopic: cfg.KafkaDLQTopic,
-		}, ledgerSvc, auditSvc, dlqProducer)
+		}, ledgerSvc, auditSvc, eventBus, dlqProducer)
 		if err != nil {
 			log.Fatal("finance payments consumer: ", err)
 		}

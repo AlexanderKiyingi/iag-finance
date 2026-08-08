@@ -115,8 +115,8 @@ func (h *procurementHandler) handlePaymentAuthorized(ctx context.Context, env pl
 
 // invoicePostedOutbox builds the invoice.posted outbox event for the consumer,
 // or nil when publishing is disabled. Written atomically with the AP item.
-func (h *procurementHandler) invoicePostedOutbox(documentRef, vendorRef, amount, currency, poRef, vatAmount, taxCode, quantity string, reverseCharge bool) *repository.OutboxEvent {
-	if h.bus == nil || !h.bus.Enabled() {
+func invoicePostedOutbox(bus *events.Bus, documentRef, vendorRef, amount, currency, poRef, vatAmount, taxCode, quantity string, reverseCharge bool) *repository.OutboxEvent {
+	if bus == nil || !bus.Enabled() {
 		return nil
 	}
 	payload := map[string]any{
@@ -142,7 +142,7 @@ func (h *procurementHandler) invoicePostedOutbox(documentRef, vendorRef, amount,
 		}
 	}
 	return &repository.OutboxEvent{
-		Topic:        h.bus.FinanceTopic(),
+		Topic:        bus.FinanceTopic(),
 		PartitionKey: documentRef,
 		EventID:      events.TypeInvoicePosted + ":" + documentRef,
 		EventType:    events.TypeInvoicePosted,
@@ -187,7 +187,7 @@ func (h *procurementHandler) handleInvoiceReceived(ctx context.Context, env plat
 	quantity, _ := data["quantity"].(string)
 	quantity = strings.TrimSpace(quantity)
 	// invoice.posted is enqueued to the outbox in the same tx as the AP item.
-	outbox := h.invoicePostedOutbox(documentRef, vendorRef, amount, currency, poRef, vatAmount, taxCode, quantity, reverseCharge)
+	outbox := invoicePostedOutbox(h.bus, documentRef, vendorRef, amount, currency, poRef, vatAmount, taxCode, quantity, reverseCharge)
 	item, err := h.ledger.CreateAPItem(ctx, vendorRef, documentRef, desc, amount, currency, due, outbox)
 	if err != nil {
 		if repository.IsUniqueViolation(err) {

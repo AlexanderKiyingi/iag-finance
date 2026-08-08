@@ -3,6 +3,7 @@ package consumer
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"log/slog"
 	"strings"
 
@@ -11,6 +12,7 @@ import (
 
 	"github.com/iag-finance/backend/internal/auditlog"
 	"github.com/iag-finance/backend/internal/domain"
+	"github.com/iag-finance/backend/internal/events"
 	"github.com/iag-finance/backend/internal/ledger"
 	"github.com/iag-finance/backend/internal/repository"
 )
@@ -36,8 +38,8 @@ type Consumer struct {
 
 // New builds a Consumer that publishes its DLQ via the supplied producer (may
 // be nil to disable DLQ).
-func New(cfg Config, ledgerSvc *ledger.Service, auditSvc *auditlog.Service, dlq *platformevents.Producer) (*Consumer, error) {
-	h := &financeHandler{ledger: ledgerSvc, audit: auditSvc}
+func New(cfg Config, ledgerSvc *ledger.Service, auditSvc *auditlog.Service, bus *events.Bus, dlq *platformevents.Producer) (*Consumer, error) {
+	h := &financeHandler{ledger: ledgerSvc, audit: auditSvc, bus: bus}
 	inner, err := platformevents.NewConsumer(platformevents.ConsumerConfig{
 		Brokers:     cfg.Brokers,
 		Topic:       cfg.Topic,
@@ -65,6 +67,10 @@ func (c *Consumer) Close() error { return c.inner.Close() }
 type financeHandler struct {
 	ledger *ledger.Service
 	audit  *auditlog.Service
+	// bus lets a handler create a payable the way procurement does — item
+	// first, with invoice.posted enqueued in the same transaction, so the
+	// journal follows from the item rather than being booked beside it.
+	bus *events.Bus
 }
 
 func (h *financeHandler) Handle(ctx context.Context, env platformevents.Envelope) error {
@@ -193,43 +199,45 @@ func (h *financeHandler) handleFleetFuelRecorded(ctx context.Context, env platfo
 	if data.VehicleID != "" {
 		desc += " (" + data.VehicleID + ")"
 	}
-	// The payable is created before the journal, so the link below has
-	// something to find.
+	// Create the payable and let invoice.posted book the journal — the same
+	// path procurement uses, rather than a second way of doing one thing.
 	//
-	// This handler used to book Cr 2000 and then link to an AP item that nothing
-	// ever created: LinkAPOpenItemByDocumentRef is an UPDATE, so it matched zero
-	// rows and reported success. The liability sat in the general ledger and was
-	// invisible to the AP subledger — absent from aged payables, with no vendor
-	// to pay, and leaving a permanent difference on the 2000 control account.
+	// This handler used to book Cr 2000 directly and then link to an AP item
+	// that nothing ever created: LinkAPOpenItemByDocumentRef is an UPDATE, so it
+	// matched zero rows and reported success. The liability sat in the general
+	// ledger and was invisible to the AP subledger — absent from aged payables,
+	// with no vendor to pay, and leaving a permanent unexplained difference on
+	// the 2000 control account.
 	//
 	// Fleet is the only system that knows about fuel drawn at a station, so the
-	// payable is real and belongs here. Fuel routed through procurement instead
-	// travels a different event (fleet.fuel.request_approved → a requisition),
-	// and if that route later produces its own invoice the two payables are now
-	// both visible rather than one hiding in the GL.
+	// payable belongs here. Fuel routed through procurement instead travels a
+	// different event — fleet.fuel.request_approved becomes a requisition, which
+	// is a pre-authorisation and not a payable.
+	if strings.TrimSpace(data.DocumentRef) == "" {
+		// Without a stable reference the payable could not be deduplicated on
+		// redelivery, and booking one anyway would create a duplicate on every
+		// retry. Fleet always sends one; refuse rather than guess.
+		return platformevents.Permanent(errors.New("fleet.fuel.recorded is missing documentRef"))
+	}
 	currency := data.Currency
 	if strings.TrimSpace(currency) == "" {
 		currency = "UGX"
 	}
-	if data.DocumentRef != "" {
-		_, err := h.ledger.CreateAPItem(ctx, strings.TrimSpace(data.VendorRef),
-			data.DocumentRef, desc, data.Amount, currency, nil, nil)
-		// A replay finds the item already there; document_ref is unique, which
-		// is what makes re-delivery safe.
-		if err != nil && !repository.IsUniqueViolation(err) {
-			return err
+	outbox := invoicePostedOutbox(h.bus, data.DocumentRef, strings.TrimSpace(data.VendorRef),
+		data.Amount, currency, "", "", "", "", false)
+	item, err := h.ledger.CreateAPItem(ctx, strings.TrimSpace(data.VendorRef),
+		data.DocumentRef, desc, data.Amount, currency, nil, outbox)
+	if err != nil {
+		// document_ref is unique, so a redelivery finds the payable already
+		// there — and its invoice.posted was enqueued the first time.
+		if repository.IsUniqueViolation(err) {
+			slog.Debug("finance fleet fuel AP already exists", "documentRef", data.DocumentRef)
+			return nil
 		}
+		return err
 	}
-
-	entry, err := h.ledger.BookFromEvent(ctx, env.ID, env.Type, env.Source, env.CorrelationID, desc, currency, []ledger.LineInput{
-		{AccountCode: "5000", Debit: amount, Memo: "Fleet fuel expense"},
-		{AccountCode: "2000", Credit: amount, Memo: "AP / fuel payable"},
-	})
-	if err == nil {
-		h.logBooked(ctx, env, entry)
-		h.linkOpenItem(ctx, env.Type, data.DocumentRef, entry, env.ID)
-	}
-	return err
+	slog.Info("finance AP item from fleet fuel", "documentRef", data.DocumentRef, "id", item.ID)
+	return nil
 }
 
 // paymentsSettledData is the payload iag-payments emits on payments.settled

@@ -289,6 +289,8 @@ func NewRouter(deps RouterDeps) *gin.Engine {
 		w.POST("/procurement/match-exceptions/:id/resolve", api.ResolveMatchException)
 		w.POST("/procurement/match-variance/write-off", api.WriteOffMatchVariance)
 		v1.GET("/ap/items", ledgerRead, api.ListAPItems)
+		// Payables the ledger carries that the subledger cannot explain.
+		v1.GET("/ap/orphaned-journals", ledgerRead, api.ListOrphanedAPJournals)
 		w.POST("/ap/items", api.CreateAPItem)
 		w.POST("/ap/items/:id/payments", api.ApplyAPPayment)
 		v1.GET("/ap/items/:id/payments", ledgerRead, api.ListAPPayments)
