@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"log/slog"
 	"strings"
 
@@ -130,8 +131,11 @@ func (h *financeHandler) handleSaleCompleted(ctx context.Context, env platformev
 	if err := remarshal(env.Data, &data); err != nil {
 		return platformevents.Permanent(err)
 	}
-	amount := parseAmount(data.Amount)
-	if amount.IsZero() {
+	amount, ok, err := parseAmountStrict(data.Amount)
+	if err != nil {
+		return platformevents.Permanent(err)
+	}
+	if !ok {
 		return nil
 	}
 	desc := "Sale completed"
@@ -188,10 +192,14 @@ func (h *financeHandler) handleFleetFuelRecorded(ctx context.Context, env platfo
 	if err := remarshal(env.Data, &data); err != nil {
 		return platformevents.Permanent(err)
 	}
-	amount := parseAmount(data.Amount)
-	if amount.IsZero() {
+	amount, ok, err := parseAmountStrict(data.Amount)
+	if err != nil {
+		return platformevents.Permanent(err)
+	}
+	if !ok {
 		return nil
 	}
+	_ = amount // the ledger books from the string; this validates it
 	desc := "Fleet fuel purchase"
 	if data.DocumentRef != "" {
 		desc += " — " + data.DocumentRef
@@ -352,10 +360,43 @@ func remarshal(in map[string]any, out any) error {
 	return json.Unmarshal(raw, out)
 }
 
+// parseAmount is the lenient reading: anything unusable becomes zero, and the
+// caller treats zero as "nothing to book".
+//
+// Prefer parseAmountStrict on any path where an unusable amount means the event
+// is broken. Zero here cannot tell a genuine nil amount from "1,234.56" with a
+// thousands separator, and a handler that returns nil on zero commits the
+// message as handled — so a malformed financial event is discarded silently and
+// never retried or sent to the DLQ.
 func parseAmount(s string) decimal.Decimal {
 	d, err := decimal.NewFromString(s)
 	if err != nil || d.LessThanOrEqual(decimal.Zero) {
 		return decimal.NewFromInt(0)
 	}
 	return d
+}
+
+// errUnparseableAmount marks an event whose amount cannot be read at all, as
+// distinct from one that legitimately carries none.
+var errUnparseableAmount = errors.New("amount is present but not a usable number")
+
+// parseAmountStrict distinguishes an absent amount from a malformed one.
+//
+// Returns (zero, false, nil) when the field is empty — nothing to book, which
+// is a legitimate no-op. Returns an error when the field is present and cannot
+// be parsed, or parses to a non-positive number, so the caller can send the
+// event to the DLQ instead of dropping it.
+func parseAmountStrict(raw string) (decimal.Decimal, bool, error) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return decimal.Zero, false, nil
+	}
+	d, err := decimal.NewFromString(raw)
+	if err != nil {
+		return decimal.Zero, false, fmt.Errorf("%w: %q", errUnparseableAmount, raw)
+	}
+	if d.LessThanOrEqual(decimal.Zero) {
+		return decimal.Zero, false, fmt.Errorf("%w: %s", errUnparseableAmount, d)
+	}
+	return d, true, nil
 }

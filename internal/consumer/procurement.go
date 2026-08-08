@@ -101,7 +101,14 @@ func (h *procurementHandler) handlePaymentAuthorized(ctx context.Context, env pl
 	// Keep cents: int64(payable) truncated the fractional currency unit.
 	amount := decimal.NewFromFloat(payable).StringFixed(2)
 	desc := strings.TrimSpace("Contract milestone payment " + number)
-	item, err := h.ledger.CreateAPItem(ctx, vendorRef, documentRef, desc, amount, "UGX", nil, nil)
+	// The contract's own currency, not an assumption. This was hardcoded to
+	// UGX, so a payment on a USD contract was booked as the same number of
+	// shillings — a payable understated by whatever the rate is.
+	currency, _ := data["currency"].(string)
+	if strings.TrimSpace(currency) == "" {
+		currency = "UGX"
+	}
+	item, err := h.ledger.CreateAPItem(ctx, vendorRef, documentRef, desc, amount, currency, nil, nil)
 	if err != nil {
 		if repository.IsUniqueViolation(err) {
 			slog.Debug("finance contract payment AP already exists", "documentRef", documentRef)
