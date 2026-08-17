@@ -12,38 +12,38 @@ import (
 
 // Config holds runtime knobs for the finance service.
 type Config struct {
-	ServiceName       string
-	Environment       string
-	BaseCurrency      string
-	Port              int
-	DatabaseURL       string
-	RedisURL          string
-	JWTIssuer         string
-	JWKSURL           string
-	Audience          string // backends MUST reject tokens lacking this aud
-	LogLevel          string
-	SeedOnStartup     bool
-	AutoMigrate       bool
-	CORSAllowOrigins  []string
+	ServiceName      string
+	Environment      string
+	BaseCurrency     string
+	Port             int
+	DatabaseURL      string
+	RedisURL         string
+	JWTIssuer        string
+	JWKSURL          string
+	Audience         string // backends MUST reject tokens lacking this aud
+	LogLevel         string
+	SeedOnStartup    bool
+	AutoMigrate      bool
+	CORSAllowOrigins []string
 	// TrustedProxies pins gin's trusted proxies (gateway/edge CIDR) so the rate
 	// limiter keys on the real, non-spoofable client IP. Empty = gin default.
 	TrustedProxies []string
 	// RateLimitPerMin is the per-principal (or per-IP) budget on the /v1 API.
-	RateLimitPerMin   int
-	EnableConsumer    bool
-	EnableEventPublish bool
-	KafkaBrokers      []string
-	KafkaClientID     string
-	KafkaGroupID      string
-	KafkaTopic            string
-	KafkaSupplyChainTopic string
+	RateLimitPerMin         int
+	EnableConsumer          bool
+	EnableEventPublish      bool
+	KafkaBrokers            []string
+	KafkaClientID           string
+	KafkaGroupID            string
+	KafkaTopic              string
+	KafkaSupplyChainTopic   string
 	KafkaCommercialTopic    string
 	KafkaOperationsTopic    string
 	KafkaPaymentsTopic      string
 	KafkaNotificationsTopic string
-	KafkaDLQTopic         string
-	ShutdownTimeout   time.Duration
-	ReadHeaderTimeout time.Duration
+	KafkaDLQTopic           string
+	ShutdownTimeout         time.Duration
+	ReadHeaderTimeout       time.Duration
 
 	// Outbound service-account credentials.
 	ServiceClientID     string
@@ -51,16 +51,16 @@ type Config struct {
 	AuthTokenURL        string
 
 	// URA EFRIS adapter (HTTP when URA_EFRIS_BASE_URL set; ura_s2s for live URA).
-	EFRISMode      string
-	EFRISBaseURL   string
-	EFRISAPIKey    string
-	EFRISTIN       string
-	EFRISSimulate  bool
-	EFRISS2SURL    string
-	EFRISS2SPath   string
-	EFRISDeviceNo  string
-	EFRISBranchID  string
-	EFRISAESKey    string
+	EFRISMode     string
+	EFRISBaseURL  string
+	EFRISAPIKey   string
+	EFRISTIN      string
+	EFRISSimulate bool
+	EFRISS2SURL   string
+	EFRISS2SPath  string
+	EFRISDeviceNo string
+	EFRISBranchID string
+	EFRISAESKey   string
 
 	// Users service (billing identity resolution).
 	UsersAPIURL string
@@ -69,16 +69,16 @@ type Config struct {
 	PaymentLinkBaseURL string
 
 	// Bank feed adapter (HTTP when BANK_FEED_BASE_URL set).
-	BankFeedBaseURL   string
-	BankFeedAPIKey    string
-	BankFeedProvider  string
-	BankFeedSimulate  bool
+	BankFeedBaseURL  string
+	BankFeedAPIKey   string
+	BankFeedProvider string
+	BankFeedSimulate bool
 
 	// Overdue AR notification cron.
-	OverdueCronEnabled   bool
-	OverdueCronInterval  time.Duration
-	OverdueNotifyEmail   string
-	OverdueNotifyHref    string
+	OverdueCronEnabled  bool
+	OverdueCronInterval time.Duration
+	OverdueNotifyEmail  string
+	OverdueNotifyHref   string
 
 	// RequireApproval enforces tiered approval: a journal post or AP/AR payment
 	// whose amount reaches an approval band is rejected on the direct endpoint and
@@ -116,7 +116,7 @@ func Load() (Config, error) {
 		seedDefault = "false"
 	}
 
-	shutdownSec, err := strconv.Atoi(getEnv("SHUTDOWN_TIMEOUT_SECONDS", "15"))
+	shutdownSec, err := strconv.Atoi(getEnv("SHUTDOWN_TIMEOUT_SECONDS", "30"))
 	if err != nil {
 		return Config{}, fmt.Errorf("invalid SHUTDOWN_TIMEOUT_SECONDS: %w", err)
 	}
@@ -141,64 +141,64 @@ func Load() (Config, error) {
 	}
 
 	cfg := Config{
-		ServiceName:         getEnv("SERVICE_NAME", "finance"),
-		BaseCurrency:        strings.ToUpper(getEnv("BASE_CURRENCY", "UGX")),
-		Environment:         env,
-		Port:                port,
-		DatabaseURL:         dbURL,
-		RedisURL:            strings.TrimSpace(os.Getenv("REDIS_URL")),
-		JWTIssuer:           issuer,
-		JWKSURL:             jwksURL,
-		Audience:            getEnv("AUDIENCE", "iag.finance"),
-		LogLevel:            getEnv("LOG_LEVEL", "info"),
-		SeedOnStartup:       getEnv("SEED_ON_STARTUP", seedDefault) == "true",
-		AutoMigrate:         getEnv("AUTO_MIGRATE", "true") != "false",
-		CORSAllowOrigins:    corsOrigins,
-		TrustedProxies:      trustedProxies,
-		RateLimitPerMin:     rlPerMin,
-		EnableConsumer:       getEnv("ENABLE_CONSUMER", defaultConsumer(env)) == "true",
-		EnableEventPublish:   getEnv("ENABLE_EVENT_PUBLISH", "true") == "true",
+		ServiceName:        getEnv("SERVICE_NAME", "finance"),
+		BaseCurrency:       strings.ToUpper(getEnv("BASE_CURRENCY", "UGX")),
+		Environment:        env,
+		Port:               port,
+		DatabaseURL:        dbURL,
+		RedisURL:           strings.TrimSpace(os.Getenv("REDIS_URL")),
+		JWTIssuer:          issuer,
+		JWKSURL:            jwksURL,
+		Audience:           getEnv("AUDIENCE", "iag.finance"),
+		LogLevel:           getEnv("LOG_LEVEL", "info"),
+		SeedOnStartup:      getEnv("SEED_ON_STARTUP", seedDefault) == "true",
+		AutoMigrate:        getEnv("AUTO_MIGRATE", "true") != "false",
+		CORSAllowOrigins:   corsOrigins,
+		TrustedProxies:     trustedProxies,
+		RateLimitPerMin:    rlPerMin,
+		EnableConsumer:     getEnv("ENABLE_CONSUMER", defaultConsumer(env)) == "true",
+		EnableEventPublish: getEnv("ENABLE_EVENT_PUBLISH", "true") == "true",
 		// Unset means "no broker configured", not localhost. A localhost default
 		// in production builds a live producer against a dead address, and every
 		// publish is synchronous and fully-acked — so each one blocks a request
 		// handler until the dial times out. Empty is what makes the
 		// len(KafkaBrokers) > 0 guards in main.go mean what they say.
-		KafkaBrokers:         splitBrokers(getEnv("KAFKA_BROKERS", "")),
-		KafkaClientID:       getEnv("KAFKA_CLIENT_ID", "finance"),
-		KafkaGroupID:        getEnv("KAFKA_GROUP_ID", "iag.finance.ledger"),
-		KafkaTopic:            getEnv("KAFKA_FINANCE_TOPIC", "iag.finance"),
+		KafkaBrokers:            splitBrokers(getEnv("KAFKA_BROKERS", "")),
+		KafkaClientID:           getEnv("KAFKA_CLIENT_ID", "finance"),
+		KafkaGroupID:            getEnv("KAFKA_GROUP_ID", "iag.finance.ledger"),
+		KafkaTopic:              getEnv("KAFKA_FINANCE_TOPIC", "iag.finance"),
 		KafkaSupplyChainTopic:   getEnv("KAFKA_SUPPLY_CHAIN_TOPIC", "iag.supply-chain"),
 		KafkaCommercialTopic:    getEnv("KAFKA_COMMERCIAL_TOPIC", "iag.commercial"),
-		KafkaOperationsTopic:  getEnv("KAFKA_OPERATIONS_TOPIC", "iag.operations"),
+		KafkaOperationsTopic:    getEnv("KAFKA_OPERATIONS_TOPIC", "iag.operations"),
 		KafkaPaymentsTopic:      getEnv("KAFKA_PAYMENTS_TOPIC", "iag.payments"),
 		KafkaNotificationsTopic: getEnv("KAFKA_NOTIFICATIONS_TOPIC", "iag.notifications"),
 		KafkaDLQTopic:           getEnv("KAFKA_DLQ_TOPIC", "iag.finance.dlq"),
-		ShutdownTimeout:     time.Duration(shutdownSec) * time.Second,
-		ReadHeaderTimeout:   10 * time.Second,
-		ServiceClientID:     getEnv("SERVICE_CLIENT_ID", "iag-finance"),
-		ServiceClientSecret: os.Getenv("SERVICE_CLIENT_SECRET"),
-		AuthTokenURL:        getEnv("AUTH_TOKEN_URL", strings.TrimRight(issuer, "/")+"/oauth/token"),
-		EFRISMode:           strings.ToLower(strings.TrimSpace(os.Getenv("URA_EFRIS_MODE"))),
-		EFRISBaseURL:        strings.TrimSpace(os.Getenv("URA_EFRIS_BASE_URL")),
-		EFRISAPIKey:         strings.TrimSpace(os.Getenv("URA_EFRIS_API_KEY")),
-		EFRISTIN:            strings.TrimSpace(os.Getenv("URA_EFRIS_TIN")),
-		RequireApproval:     getEnv("FINANCE_REQUIRE_APPROVAL", "false") == "true",
-		EFRISSimulate:       getEnv("URA_EFRIS_SIMULATE", "false") == "true",
-		EFRISS2SURL:         strings.TrimSpace(os.Getenv("URA_EFRIS_S2S_URL")),
-		EFRISS2SPath:        strings.TrimSpace(os.Getenv("URA_EFRIS_S2S_PATH")),
-		EFRISDeviceNo:       strings.TrimSpace(os.Getenv("URA_EFRIS_DEVICE_NO")),
-		EFRISBranchID:       strings.TrimSpace(os.Getenv("URA_EFRIS_BRANCH_ID")),
-		EFRISAESKey:         strings.TrimSpace(os.Getenv("URA_EFRIS_AES_KEY")),
-		UsersAPIURL:         strings.TrimSpace(firstNonEmpty(os.Getenv("USERS_API_URL"), os.Getenv("ACCOUNTS_URL"))),
-		PaymentLinkBaseURL:  strings.TrimSpace(os.Getenv("PAYMENT_LINK_BASE_URL")),
-		BankFeedBaseURL:     strings.TrimSpace(os.Getenv("BANK_FEED_BASE_URL")),
-		BankFeedAPIKey:      strings.TrimSpace(os.Getenv("BANK_FEED_API_KEY")),
-		BankFeedProvider:    getEnv("BANK_FEED_PROVIDER", "stanbic"),
-		BankFeedSimulate:    getEnv("BANK_FEED_SIMULATE", "false") == "true",
-		OverdueCronEnabled:  getEnv("OVERDUE_CRON_ENABLED", overdueCronDefault(env)) == "true",
-		OverdueCronInterval: overdueCronInterval(),
-		OverdueNotifyEmail:  strings.TrimSpace(os.Getenv("OVERDUE_NOTIFY_EMAIL")),
-		OverdueNotifyHref:   strings.TrimSpace(os.Getenv("OVERDUE_NOTIFY_HREF")),
+		ShutdownTimeout:         time.Duration(shutdownSec) * time.Second,
+		ReadHeaderTimeout:       10 * time.Second,
+		ServiceClientID:         getEnv("SERVICE_CLIENT_ID", "iag-finance"),
+		ServiceClientSecret:     os.Getenv("SERVICE_CLIENT_SECRET"),
+		AuthTokenURL:            getEnv("AUTH_TOKEN_URL", strings.TrimRight(issuer, "/")+"/oauth/token"),
+		EFRISMode:               strings.ToLower(strings.TrimSpace(os.Getenv("URA_EFRIS_MODE"))),
+		EFRISBaseURL:            strings.TrimSpace(os.Getenv("URA_EFRIS_BASE_URL")),
+		EFRISAPIKey:             strings.TrimSpace(os.Getenv("URA_EFRIS_API_KEY")),
+		EFRISTIN:                strings.TrimSpace(os.Getenv("URA_EFRIS_TIN")),
+		RequireApproval:         getEnv("FINANCE_REQUIRE_APPROVAL", "false") == "true",
+		EFRISSimulate:           getEnv("URA_EFRIS_SIMULATE", "false") == "true",
+		EFRISS2SURL:             strings.TrimSpace(os.Getenv("URA_EFRIS_S2S_URL")),
+		EFRISS2SPath:            strings.TrimSpace(os.Getenv("URA_EFRIS_S2S_PATH")),
+		EFRISDeviceNo:           strings.TrimSpace(os.Getenv("URA_EFRIS_DEVICE_NO")),
+		EFRISBranchID:           strings.TrimSpace(os.Getenv("URA_EFRIS_BRANCH_ID")),
+		EFRISAESKey:             strings.TrimSpace(os.Getenv("URA_EFRIS_AES_KEY")),
+		UsersAPIURL:             strings.TrimSpace(firstNonEmpty(os.Getenv("USERS_API_URL"), os.Getenv("ACCOUNTS_URL"))),
+		PaymentLinkBaseURL:      strings.TrimSpace(os.Getenv("PAYMENT_LINK_BASE_URL")),
+		BankFeedBaseURL:         strings.TrimSpace(os.Getenv("BANK_FEED_BASE_URL")),
+		BankFeedAPIKey:          strings.TrimSpace(os.Getenv("BANK_FEED_API_KEY")),
+		BankFeedProvider:        getEnv("BANK_FEED_PROVIDER", "stanbic"),
+		BankFeedSimulate:        getEnv("BANK_FEED_SIMULATE", "false") == "true",
+		OverdueCronEnabled:      getEnv("OVERDUE_CRON_ENABLED", overdueCronDefault(env)) == "true",
+		OverdueCronInterval:     overdueCronInterval(),
+		OverdueNotifyEmail:      strings.TrimSpace(os.Getenv("OVERDUE_NOTIFY_EMAIL")),
+		OverdueNotifyHref:       strings.TrimSpace(os.Getenv("OVERDUE_NOTIFY_HREF")),
 	}
 
 	return cfg, cfg.validate()
