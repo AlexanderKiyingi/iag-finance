@@ -1,6 +1,7 @@
 package consumer
 
 import (
+	"context"
 	"testing"
 
 	platformevents "github.com/alvor-technologies/iag-platform-go/events"
@@ -32,7 +33,7 @@ func TestERPHandledTypes(t *testing.T) {
 // permanently rather than redelivered until the DLQ picks it up on age.
 func TestERPHandler_payrollMissingFields(t *testing.T) {
 	h := &erpHandler{ledger: &ledger.Service{}}
-	err := h.handlePayrollRun(t.Context(), platformevents.Envelope{
+	err := h.handlePayrollRun(context.Background(), platformevents.Envelope{
 		Type: erpPayrollRunPosted,
 		ID:   "evt-3",
 		Data: map[string]any{"gross": 1000000},
@@ -46,7 +47,7 @@ func TestERPHandler_payrollMissingFields(t *testing.T) {
 // than panic on the nil service.
 func TestERPHandler_payrollWithoutLedgerIsIgnored(t *testing.T) {
 	h := &erpHandler{}
-	err := h.Handle(t.Context(), platformevents.Envelope{
+	err := h.Handle(context.Background(), platformevents.Envelope{
 		Type: erpPayrollRunPosted,
 		ID:   "evt-4",
 		Data: map[string]any{"run_ref": "PR-2026-07-ABC123", "period": "2026-07"},
@@ -58,14 +59,14 @@ func TestERPHandler_payrollWithoutLedgerIsIgnored(t *testing.T) {
 
 func TestERPHandler_ignoresUnknown(t *testing.T) {
 	h := &erpHandler{}
-	if err := h.Handle(t.Context(), platformevents.Envelope{Type: "erp.production_order.updated"}); err != nil {
+	if err := h.Handle(context.Background(), platformevents.Envelope{Type: "erp.production_order.updated"}); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 }
 
 func TestERPHandler_employeeMissingNo(t *testing.T) {
 	h := &erpHandler{repo: nil}
-	err := h.handleEmployee(t.Context(), platformevents.Envelope{
+	err := h.handleEmployee(context.Background(), platformevents.Envelope{
 		Type: erpEmployeeCreated,
 		ID:   "evt-1",
 		Data: map[string]any{"first_name": "Jane"},
@@ -77,7 +78,7 @@ func TestERPHandler_employeeMissingNo(t *testing.T) {
 
 func TestERPHandler_leaveMissingFields(t *testing.T) {
 	h := &erpHandler{repo: nil}
-	err := h.handleLeave(t.Context(), platformevents.Envelope{
+	err := h.handleLeave(context.Background(), platformevents.Envelope{
 		Type: erpLeaveApproved,
 		ID:   "evt-2",
 		Data: map[string]any{"employee_no": "EMP-001"},

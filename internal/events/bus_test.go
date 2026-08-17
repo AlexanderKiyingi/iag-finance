@@ -1,11 +1,14 @@
 package events
 
-import "testing"
+import (
+	"context"
+	"testing"
+)
 
 func TestBusDisabledPublishNoPanic(t *testing.T) {
 	var b *Bus
-	b.Publish(t.Context(), "id", TypeSaleCompleted, map[string]any{"amount": "1"}, "key")
-	b.PublishNotification(t.Context(), "a@b.com", "welcome-email", nil)
+	b.Publish(context.Background(), "id", TypeSaleCompleted, map[string]any{"amount": "1"}, "key")
+	b.PublishNotification(context.Background(), "a@b.com", "welcome-email", nil)
 }
 
 func TestNotificationsEnabledWithoutFinanceTopic(t *testing.T) {
