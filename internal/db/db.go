@@ -13,6 +13,8 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
+
+	platformdb "github.com/alvor-technologies/iag-platform-go/db"
 )
 
 //go:embed migrations/*.sql
@@ -29,23 +31,33 @@ const (
 	financeMigrationsTable = "finance_schema_migrations"
 )
 
+// Connect opens the finance pool through the shared platform pool package.
+//
+// It previously parsed the DSN here and took pgx's defaults for everything
+// else: no connection ceiling, no warm minimum, and no lifetime bound. On a
+// platform where ~23 services share one Postgres instance, an unbounded pool
+// per service is how "slow" becomes "too many clients", and no minimum means a
+// burst of traffic pays TCP and TLS setup before its first query.
+//
+// The search_path also moves. It was applied with an AfterConnect `SET`, which
+// is correct against Postgres directly and silently wrong behind PgBouncer in
+// transaction pooling mode: the SET binds to one server connection while the
+// next transaction may land on another, and finance's tables would be looked
+// up in the wrong schema. The shared package sets it as a startup parameter,
+// which the pooler tracks per server connection.
+//
+// Pool sizing is env-tunable (DB_MAX_CONNS, DB_MIN_CONNS, DB_POOLER_MODE, ...)
+// so it can be adjusted per environment without a deploy.
 func Connect(ctx context.Context, databaseURL string) (*pgxpool.Pool, error) {
-	cfg, err := pgxpool.ParseConfig(databaseURL)
-	if err != nil {
-		return nil, fmt.Errorf("parse database url: %w", err)
+	cfg := platformdb.ConfigFromEnv(financeSchema + ", public")
+	// The caller's URL wins: tests and tools pass an explicit DSN, and
+	// ConfigFromEnv would otherwise silently substitute $DATABASE_URL.
+	if strings.TrimSpace(databaseURL) != "" {
+		cfg.URL = databaseURL
 	}
-	cfg.AfterConnect = func(ctx context.Context, conn *pgx.Conn) error {
-		_, err := conn.Exec(ctx, `SET search_path TO finance, public`)
-		return err
-	}
-
-	pool, err := pgxpool.NewWithConfig(ctx, cfg)
+	pool, err := platformdb.Connect(ctx, cfg)
 	if err != nil {
 		return nil, fmt.Errorf("connect database: %w", err)
-	}
-	if err := pool.Ping(ctx); err != nil {
-		pool.Close()
-		return nil, fmt.Errorf("ping database: %w", err)
 	}
 	return pool, nil
 }
