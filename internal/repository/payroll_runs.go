@@ -11,18 +11,22 @@ import (
 
 // PayrollRun is a finalized payroll run and the journal entry it booked.
 type PayrollRun struct {
-	ID              uuid.UUID  `json:"id"`
-	RunRef          string     `json:"runRef"`
-	Period          string     `json:"period"`
-	Gross           string     `json:"gross"`
-	PAYE            string     `json:"paye"`
-	NSSF            string     `json:"nssf"`
-	OtherDeductions string     `json:"otherDeductions"`
-	Net             string     `json:"net"`
-	Currency        string     `json:"currency"`
-	Status          string     `json:"status"`
-	JournalEntryID  *uuid.UUID `json:"journalEntryId,omitempty"`
-	CreatedAt       time.Time  `json:"createdAt"`
+	ID              uuid.UUID `json:"id"`
+	RunRef          string    `json:"runRef"`
+	Period          string    `json:"period"`
+	Gross           string    `json:"gross"`
+	PAYE            string    `json:"paye"`
+	NSSF            string    `json:"nssf"`
+	OtherDeductions string    `json:"otherDeductions"`
+	Net             string    `json:"net"`
+	Currency        string    `json:"currency"`
+	// EmployerNSSF is the employer's own contribution, booked as its own
+	// expense/payable pair. Nil on runs posted before it was booked at all,
+	// which is not the same as a run where it came to zero.
+	EmployerNSSF   *string    `json:"employerNssf,omitempty"`
+	Status         string     `json:"status"`
+	JournalEntryID *uuid.UUID `json:"journalEntryId,omitempty"`
+	CreatedAt      time.Time  `json:"createdAt"`
 }
 
 // GetPayrollRunByRef returns the run with the given idempotency key, or nil if
@@ -30,12 +34,14 @@ type PayrollRun struct {
 func (r *Repository) GetPayrollRunByRef(ctx context.Context, runRef string) (*PayrollRun, error) {
 	row := r.pool.QueryRow(ctx, `
 		SELECT id, run_ref, period, gross::text, paye::text, nssf::text,
-		       other_deductions::text, net::text, currency, status, journal_entry_id, created_at
+		       other_deductions::text, net::text, currency, employer_nssf::text,
+		       status, journal_entry_id, created_at
 		FROM payroll_runs WHERE run_ref = $1
 	`, runRef)
 	var p PayrollRun
 	if err := row.Scan(&p.ID, &p.RunRef, &p.Period, &p.Gross, &p.PAYE, &p.NSSF,
-		&p.OtherDeductions, &p.Net, &p.Currency, &p.Status, &p.JournalEntryID, &p.CreatedAt); err != nil {
+		&p.OtherDeductions, &p.Net, &p.Currency, &p.EmployerNSSF,
+		&p.Status, &p.JournalEntryID, &p.CreatedAt); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, nil
 		}
@@ -54,21 +60,27 @@ type PayrollRunParams struct {
 	OtherDeductions string
 	Net             string
 	Currency        string
-	JournalEntryID  uuid.UUID
+	// EmployerNSSF is written as NULL when empty, preserving the distinction
+	// between "not booked" and "booked and came to nothing".
+	EmployerNSSF   string
+	JournalEntryID uuid.UUID
 }
 
 // RecordPayrollRun persists a posted run. The run_ref unique constraint makes
 // this the idempotency backstop if two requests race past GetPayrollRunByRef.
 func (r *Repository) RecordPayrollRun(ctx context.Context, in PayrollRunParams) (*PayrollRun, error) {
 	row := r.pool.QueryRow(ctx, `
-		INSERT INTO payroll_runs (run_ref, period, gross, paye, nssf, other_deductions, net, currency, status, journal_entry_id)
-		VALUES ($1,$2,$3::numeric,$4::numeric,$5::numeric,$6::numeric,$7::numeric,$8,'posted',$9)
+		INSERT INTO payroll_runs (run_ref, period, gross, paye, nssf, other_deductions, net, currency, employer_nssf, status, journal_entry_id)
+		VALUES ($1,$2,$3::numeric,$4::numeric,$5::numeric,$6::numeric,$7::numeric,$8,NULLIF($9,'')::numeric,'posted',$10)
 		RETURNING id, run_ref, period, gross::text, paye::text, nssf::text,
-		          other_deductions::text, net::text, currency, status, journal_entry_id, created_at
-	`, in.RunRef, in.Period, in.Gross, in.PAYE, in.NSSF, in.OtherDeductions, in.Net, in.Currency, in.JournalEntryID)
+		          other_deductions::text, net::text, currency, employer_nssf::text,
+		          status, journal_entry_id, created_at
+	`, in.RunRef, in.Period, in.Gross, in.PAYE, in.NSSF, in.OtherDeductions, in.Net,
+		in.Currency, in.EmployerNSSF, in.JournalEntryID)
 	var p PayrollRun
 	if err := row.Scan(&p.ID, &p.RunRef, &p.Period, &p.Gross, &p.PAYE, &p.NSSF,
-		&p.OtherDeductions, &p.Net, &p.Currency, &p.Status, &p.JournalEntryID, &p.CreatedAt); err != nil {
+		&p.OtherDeductions, &p.Net, &p.Currency, &p.EmployerNSSF,
+		&p.Status, &p.JournalEntryID, &p.CreatedAt); err != nil {
 		return nil, err
 	}
 	return &p, nil
@@ -81,7 +93,8 @@ func (r *Repository) ListPayrollRuns(ctx context.Context, limit int) ([]PayrollR
 	}
 	rows, err := r.pool.Query(ctx, `
 		SELECT id, run_ref, period, gross::text, paye::text, nssf::text,
-		       other_deductions::text, net::text, currency, status, journal_entry_id, created_at
+		       other_deductions::text, net::text, currency, employer_nssf::text,
+		       status, journal_entry_id, created_at
 		FROM payroll_runs ORDER BY created_at DESC LIMIT `+itoa(limit))
 	if err != nil {
 		return nil, err
@@ -91,7 +104,8 @@ func (r *Repository) ListPayrollRuns(ctx context.Context, limit int) ([]PayrollR
 	for rows.Next() {
 		var p PayrollRun
 		if err := rows.Scan(&p.ID, &p.RunRef, &p.Period, &p.Gross, &p.PAYE, &p.NSSF,
-			&p.OtherDeductions, &p.Net, &p.Currency, &p.Status, &p.JournalEntryID, &p.CreatedAt); err != nil {
+			&p.OtherDeductions, &p.Net, &p.Currency, &p.EmployerNSSF,
+			&p.Status, &p.JournalEntryID, &p.CreatedAt); err != nil {
 			return nil, err
 		}
 		out = append(out, p)

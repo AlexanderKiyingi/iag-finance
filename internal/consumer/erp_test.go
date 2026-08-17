@@ -4,12 +4,14 @@ import (
 	"testing"
 
 	platformevents "github.com/alvor-technologies/iag-platform-go/events"
+
+	"github.com/iag-finance/backend/internal/ledger"
 )
 
 func TestERPHandledTypes(t *testing.T) {
 	types := ERPHandledTypes()
-	if len(types) != 6 {
-		t.Fatalf("len = %d, want 6", len(types))
+	if len(types) != 7 {
+		t.Fatalf("len = %d, want 7", len(types))
 	}
 	seen := map[string]bool{}
 	for _, et := range types {
@@ -20,6 +22,37 @@ func TestERPHandledTypes(t *testing.T) {
 	}
 	if !seen["erp.employee.created"] || !seen["erp.leave.approved"] {
 		t.Fatalf("missing expected types: %#v", types)
+	}
+	if !seen["erp.payroll.run_posted"] {
+		t.Fatalf("payroll runs are not listed as handled: %#v", types)
+	}
+}
+
+// A run with no ref or period can never be posted, so it must be rejected
+// permanently rather than redelivered until the DLQ picks it up on age.
+func TestERPHandler_payrollMissingFields(t *testing.T) {
+	h := &erpHandler{ledger: &ledger.Service{}}
+	err := h.handlePayrollRun(t.Context(), platformevents.Envelope{
+		Type: erpPayrollRunPosted,
+		ID:   "evt-3",
+		Data: map[string]any{"gross": 1000000},
+	})
+	if err == nil {
+		t.Fatal("expected permanent error")
+	}
+}
+
+// Deployments that run the mirror without a ledger must ignore payroll rather
+// than panic on the nil service.
+func TestERPHandler_payrollWithoutLedgerIsIgnored(t *testing.T) {
+	h := &erpHandler{}
+	err := h.Handle(t.Context(), platformevents.Envelope{
+		Type: erpPayrollRunPosted,
+		ID:   "evt-4",
+		Data: map[string]any{"run_ref": "PR-2026-07-ABC123", "period": "2026-07"},
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
 	}
 }
 

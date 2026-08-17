@@ -19,6 +19,10 @@ const (
 	acctNSSFPayable      = "2210"
 	acctNetSalaryPayable = "2220"
 	acctOtherDeductions  = "2230"
+	// The employer's own contribution is a cost on top of gross pay, not a
+	// deduction from it, so it gets its own expense account. Seeded by
+	// migration 066_employer_nssf.sql.
+	acctEmployerNSSFExpense = "5210"
 )
 
 var ErrPayrollUnbalanced = errors.New("payroll run does not balance: gross must equal deductions + net")
@@ -33,6 +37,10 @@ type PayrollRunInput struct {
 	OtherDeductions decimal.Decimal
 	Net             decimal.Decimal
 	Currency        string
+	// EmployerNSSF is the employer's own contribution. It sits outside the
+	// gross = deductions + net identity because it is not withheld from anyone:
+	// it is a separate cost, booked as its own balanced pair of lines.
+	EmployerNSSF decimal.Decimal
 }
 
 // PostPayrollRun books a finalized payroll run to the general ledger:
@@ -50,9 +58,14 @@ func (s *Service) PostPayrollRun(ctx context.Context, in PayrollRunInput) (*repo
 	if in.RunRef == "" || in.Period == "" {
 		return nil, errors.New("payroll run requires runRef and period")
 	}
-	// Balance check: gross = paye + nssf + other + net, and gross > 0.
+	// Balance check: gross = paye + nssf + other + net, and gross > 0. The
+	// employer contribution is deliberately outside this identity — it is not
+	// withheld from gross, so including it would make every correct run fail.
 	deductionsPlusNet := in.PAYE.Add(in.NSSF).Add(in.OtherDeductions).Add(in.Net)
 	if in.Gross.LessThanOrEqual(decimal.Zero) || !in.Gross.Equal(deductionsPlusNet) {
+		return nil, ErrPayrollUnbalanced
+	}
+	if in.EmployerNSSF.IsNegative() {
 		return nil, ErrPayrollUnbalanced
 	}
 
@@ -81,6 +94,15 @@ func (s *Service) PostPayrollRun(ctx context.Context, in PayrollRunInput) (*repo
 	if in.OtherDeductions.GreaterThan(decimal.Zero) {
 		lines = append(lines, LineInput{AccountCode: acctOtherDeductions, Credit: in.OtherDeductions, Memo: "Other deductions"})
 	}
+	// The employer's contribution is its own balanced pair — an expense the
+	// employer incurs and a payable to the same fund — so it adds to the entry
+	// without disturbing the gross = deductions + net identity checked above.
+	if in.EmployerNSSF.GreaterThan(decimal.Zero) {
+		lines = append(lines,
+			LineInput{AccountCode: acctEmployerNSSFExpense, Debit: in.EmployerNSSF, Memo: "Employer NSSF contribution"},
+			LineInput{AccountCode: acctNSSFPayable, Credit: in.EmployerNSSF, Memo: "Employer NSSF payable"},
+		)
+	}
 
 	sourceEventID := "payroll:" + in.RunRef
 	sourceService := "payroll"
@@ -98,6 +120,12 @@ func (s *Service) PostPayrollRun(ctx context.Context, in PayrollRunInput) (*repo
 		return nil, err
 	}
 
+	// An employer figure of zero is still a figure that was computed, so it is
+	// recorded; only a run that never carried one is left NULL.
+	employerNSSF := ""
+	if !in.EmployerNSSF.IsZero() {
+		employerNSSF = in.EmployerNSSF.StringFixed(2)
+	}
 	return s.repo.RecordPayrollRun(ctx, repository.PayrollRunParams{
 		RunRef:          in.RunRef,
 		Period:          in.Period,
@@ -107,6 +135,7 @@ func (s *Service) PostPayrollRun(ctx context.Context, in PayrollRunInput) (*repo
 		OtherDeductions: in.OtherDeductions.StringFixed(2),
 		Net:             in.Net.StringFixed(2),
 		Currency:        currency,
+		EmployerNSSF:    employerNSSF,
 		JournalEntryID:  posted.ID,
 	})
 }

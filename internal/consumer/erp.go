@@ -10,7 +10,9 @@ import (
 
 	platformevents "github.com/alvor-technologies/iag-platform-go/events"
 	"github.com/google/uuid"
+	"github.com/shopspring/decimal"
 
+	"github.com/iag-finance/backend/internal/ledger"
 	"github.com/iag-finance/backend/internal/repository"
 )
 
@@ -27,10 +29,14 @@ const (
 	// wrong side to accrue a liability from.
 	erpLeaveBalanceChanged = "erp.leave.balance_changed"
 	erpEmployeeRateChanged = "erp.employee.rate_changed"
+	// A payroll run that iag-erp computed, had approved by a second person, and
+	// released. Period totals only — never a per-employee figure.
+	erpPayrollRunPosted = "erp.payroll.run_posted"
 )
 
 type erpHandler struct {
-	repo *repository.Repository
+	repo   *repository.Repository
+	ledger *ledger.Service
 }
 
 func (h *erpHandler) Handle(ctx context.Context, env platformevents.Envelope) error {
@@ -43,9 +49,76 @@ func (h *erpHandler) Handle(ctx context.Context, env platformevents.Envelope) er
 		return h.handleEmployeeRate(ctx, env)
 	case erpLeaveApproved, erpLeaveRejected, erpLeaveCancelled:
 		return h.handleLeave(ctx, env)
+	case erpPayrollRunPosted:
+		return h.handlePayrollRun(ctx, env)
 	default:
 		return nil
 	}
+}
+
+type erpPayrollRunData struct {
+	RunRef          string  `json:"run_ref"`
+	Period          string  `json:"period"`
+	Currency        string  `json:"currency"`
+	EmployeeCount   int     `json:"employee_count"`
+	Gross           float64 `json:"gross"`
+	PAYE            float64 `json:"paye"`
+	NSSFEmployee    float64 `json:"nssf_employee"`
+	NSSFEmployer    float64 `json:"nssf_employer"`
+	OtherDeductions float64 `json:"other_deductions"`
+	Net             float64 `json:"net"`
+}
+
+// handlePayrollRun books a payroll run iag-erp released.
+//
+// Until now payroll reached the ledger only when an operator typed the totals
+// into POST /payroll/runs, so the figures posted were re-keyed from wherever
+// payroll was actually calculated. This is the same posting, driven by the
+// system that computed it.
+//
+// The two NSSF halves travel separately because they are different postings:
+// the employee's share is withheld from gross and belongs inside the
+// gross = PAYE + NSSF + other + net identity, while the employer's is a cost on
+// top of pay and is booked as its own expense/payable pair.
+func (h *erpHandler) handlePayrollRun(ctx context.Context, env platformevents.Envelope) error {
+	if h.ledger == nil {
+		return nil
+	}
+	var data erpPayrollRunData
+	if err := remarshal(env.Data, &data); err != nil {
+		return platformevents.Permanent(err)
+	}
+	data.RunRef = strings.TrimSpace(data.RunRef)
+	data.Period = strings.TrimSpace(data.Period)
+	if data.RunRef == "" || data.Period == "" {
+		return platformevents.Permanent(errMissingERPPayrollFields)
+	}
+
+	run, err := h.ledger.PostPayrollRun(ctx, ledger.PayrollRunInput{
+		RunRef:          data.RunRef,
+		Period:          data.Period,
+		Gross:           decimal.NewFromFloat(data.Gross),
+		PAYE:            decimal.NewFromFloat(data.PAYE),
+		NSSF:            decimal.NewFromFloat(data.NSSFEmployee),
+		OtherDeductions: decimal.NewFromFloat(data.OtherDeductions),
+		Net:             decimal.NewFromFloat(data.Net),
+		Currency:        strings.TrimSpace(data.Currency),
+		EmployerNSSF:    decimal.NewFromFloat(data.NSSFEmployer),
+	})
+	if err != nil {
+		// A run that does not balance will never balance on a retry, and a
+		// closed period will not reopen itself. Both belong in the DLQ for a
+		// person to look at rather than in a redelivery loop.
+		if errors.Is(err, ledger.ErrPayrollUnbalanced) || errors.Is(err, ledger.ErrPeriodClosed) ||
+			errors.Is(err, ledger.ErrAccountNotFound) {
+			return platformevents.Permanent(err)
+		}
+		return err
+	}
+	slog.Info("finance posted erp payroll run",
+		"run_ref", run.RunRef, "period", run.Period, "journal_entry_id", run.JournalEntryID,
+		"employee_count", data.EmployeeCount)
+	return nil
 }
 
 type erpEmployeeData struct {
@@ -159,13 +232,17 @@ func (h *erpHandler) handleLeave(ctx context.Context, env platformevents.Envelop
 }
 
 var (
-	errMissingERPEmployeeNo  = errors.New("erp employee event missing employee_no")
-	errMissingERPLeaveFields = errors.New("erp leave event missing leave_request_id or employee_no")
+	errMissingERPEmployeeNo    = errors.New("erp employee event missing employee_no")
+	errMissingERPLeaveFields   = errors.New("erp leave event missing leave_request_id or employee_no")
+	errMissingERPPayrollFields = errors.New("erp payroll event missing run_ref or period")
 )
 
 // NewERP builds a consumer for iag-erp HR events on iag.operations.
-func NewERP(cfg Config, repo *repository.Repository, dlq *platformevents.Producer) (*Consumer, error) {
-	h := &erpHandler{repo: repo}
+//
+// ledgerSvc may be nil, in which case payroll runs are ignored rather than
+// booked — the employee and leave mirrors do not need it.
+func NewERP(cfg Config, repo *repository.Repository, ledgerSvc *ledger.Service, dlq *platformevents.Producer) (*Consumer, error) {
+	h := &erpHandler{repo: repo, ledger: ledgerSvc}
 	inner, err := platformevents.NewConsumer(platformevents.ConsumerConfig{
 		Brokers:     cfg.Brokers,
 		Topic:       cfg.Topic,
@@ -186,6 +263,7 @@ func ERPHandledTypes() []string {
 	return []string{
 		erpEmployeeCreated, erpEmployeeUpdated, erpEmployeeTerminated,
 		erpLeaveApproved, erpLeaveRejected, erpLeaveCancelled,
+		erpPayrollRunPosted,
 	}
 }
 

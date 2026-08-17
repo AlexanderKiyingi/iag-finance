@@ -53,6 +53,10 @@ type postPayrollRunRequest struct {
 	OtherDeductions string `json:"otherDeductions"`
 	Net             string `json:"net" binding:"required"`
 	Currency        string `json:"currency"`
+	// EmployerNSSF is the employer's own contribution. Optional, and outside
+	// the gross = deductions + net identity: it is a cost on top of pay, not
+	// withheld from it.
+	EmployerNSSF string `json:"employerNssf"`
 }
 
 // PostPayrollRun books a finalized payroll run to the general ledger
@@ -120,6 +124,7 @@ func parsePayrollAmounts(req postPayrollRunRequest) (ledger.PayrollRunInput, err
 		OtherDeductions: other,
 		Net:             net,
 		Currency:        req.Currency,
+		EmployerNSSF:    optionalDecimal(req.EmployerNSSF),
 	}, nil
 }
 
