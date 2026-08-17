@@ -29,25 +29,41 @@ type PayrollRun struct {
 	CreatedAt      time.Time  `json:"createdAt"`
 }
 
-// GetPayrollRunByRef returns the run with the given idempotency key, or nil if
-// it has not been posted yet.
-func (r *Repository) GetPayrollRunByRef(ctx context.Context, runRef string) (*PayrollRun, error) {
-	row := r.pool.QueryRow(ctx, `
-		SELECT id, run_ref, period, gross::text, paye::text, nssf::text,
-		       other_deductions::text, net::text, currency, employer_nssf::text,
-		       status, journal_entry_id, created_at
-		FROM payroll_runs WHERE run_ref = $1
-	`, runRef)
+// One column list and one reader for payroll_runs.
+//
+// The three queries below previously each carried their own hand-written scan
+// of the same shape. Adding employer_nssf to the SELECTs and to only some of
+// the scans left two of them reading thirteen columns into twelve destinations
+// — and because Scan is variadic, nothing failed until it ran. One reader
+// removes the possibility rather than relying on remembering.
+const payrollRunColumns = `id, run_ref, period, gross::text, paye::text, nssf::text,
+	other_deductions::text, net::text, currency, employer_nssf::text,
+	status, journal_entry_id, created_at`
+
+func scanPayrollRun(row pgx.Row) (*PayrollRun, error) {
 	var p PayrollRun
 	if err := row.Scan(&p.ID, &p.RunRef, &p.Period, &p.Gross, &p.PAYE, &p.NSSF,
 		&p.OtherDeductions, &p.Net, &p.Currency, &p.EmployerNSSF,
 		&p.Status, &p.JournalEntryID, &p.CreatedAt); err != nil {
+		return nil, err
+	}
+	return &p, nil
+}
+
+// GetPayrollRunByRef returns the run with the given idempotency key, or nil if
+// it has not been posted yet.
+func (r *Repository) GetPayrollRunByRef(ctx context.Context, runRef string) (*PayrollRun, error) {
+	p, err := scanPayrollRun(r.pool.QueryRow(ctx,
+		`SELECT `+payrollRunColumns+` FROM payroll_runs WHERE run_ref = $1`, runRef))
+	if err != nil {
+		// Not posted yet is an answer, not a failure: the caller uses this to
+		// decide whether to post.
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, nil
 		}
 		return nil, err
 	}
-	return &p, nil
+	return p, nil
 }
 
 // PayrollRunParams is the persisted record of a posted run.
@@ -72,18 +88,10 @@ func (r *Repository) RecordPayrollRun(ctx context.Context, in PayrollRunParams) 
 	row := r.pool.QueryRow(ctx, `
 		INSERT INTO payroll_runs (run_ref, period, gross, paye, nssf, other_deductions, net, currency, employer_nssf, status, journal_entry_id)
 		VALUES ($1,$2,$3::numeric,$4::numeric,$5::numeric,$6::numeric,$7::numeric,$8,NULLIF($9,'')::numeric,'posted',$10)
-		RETURNING id, run_ref, period, gross::text, paye::text, nssf::text,
-		          other_deductions::text, net::text, currency, employer_nssf::text,
-		          status, journal_entry_id, created_at
+		RETURNING `+payrollRunColumns+`
 	`, in.RunRef, in.Period, in.Gross, in.PAYE, in.NSSF, in.OtherDeductions, in.Net,
 		in.Currency, in.EmployerNSSF, in.JournalEntryID)
-	var p PayrollRun
-	if err := row.Scan(&p.ID, &p.RunRef, &p.Period, &p.Gross, &p.PAYE, &p.NSSF,
-		&p.OtherDeductions, &p.Net, &p.Currency, &p.EmployerNSSF,
-		&p.Status, &p.JournalEntryID, &p.CreatedAt); err != nil {
-		return nil, err
-	}
-	return &p, nil
+	return scanPayrollRun(row)
 }
 
 // ListPayrollRuns returns posted runs, newest first.
@@ -91,24 +99,19 @@ func (r *Repository) ListPayrollRuns(ctx context.Context, limit int) ([]PayrollR
 	if limit <= 0 || limit > 500 {
 		limit = 100
 	}
-	rows, err := r.pool.Query(ctx, `
-		SELECT id, run_ref, period, gross::text, paye::text, nssf::text,
-		       other_deductions::text, net::text, currency, employer_nssf::text,
-		       status, journal_entry_id, created_at
-		FROM payroll_runs ORDER BY created_at DESC LIMIT `+itoa(limit))
+	rows, err := r.pool.Query(ctx,
+		`SELECT `+payrollRunColumns+` FROM payroll_runs ORDER BY created_at DESC LIMIT `+itoa(limit))
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
 	out := []PayrollRun{}
 	for rows.Next() {
-		var p PayrollRun
-		if err := rows.Scan(&p.ID, &p.RunRef, &p.Period, &p.Gross, &p.PAYE, &p.NSSF,
-			&p.OtherDeductions, &p.Net, &p.Currency, &p.EmployerNSSF,
-			&p.Status, &p.JournalEntryID, &p.CreatedAt); err != nil {
+		p, err := scanPayrollRun(rows)
+		if err != nil {
 			return nil, err
 		}
-		out = append(out, p)
+		out = append(out, *p)
 	}
 	return out, rows.Err()
 }
