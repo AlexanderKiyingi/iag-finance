@@ -158,7 +158,12 @@ func Load() (Config, error) {
 		RateLimitPerMin:     rlPerMin,
 		EnableConsumer:       getEnv("ENABLE_CONSUMER", defaultConsumer(env)) == "true",
 		EnableEventPublish:   getEnv("ENABLE_EVENT_PUBLISH", "true") == "true",
-		KafkaBrokers:         splitBrokers(getEnv("KAFKA_BROKERS", "localhost:19092")),
+		// Unset means "no broker configured", not localhost. A localhost default
+		// in production builds a live producer against a dead address, and every
+		// publish is synchronous and fully-acked — so each one blocks a request
+		// handler until the dial times out. Empty is what makes the
+		// len(KafkaBrokers) > 0 guards in main.go mean what they say.
+		KafkaBrokers:         splitBrokers(getEnv("KAFKA_BROKERS", "")),
 		KafkaClientID:       getEnv("KAFKA_CLIENT_ID", "finance"),
 		KafkaGroupID:        getEnv("KAFKA_GROUP_ID", "iag.finance.ledger"),
 		KafkaTopic:            getEnv("KAFKA_FINANCE_TOPIC", "iag.finance"),
