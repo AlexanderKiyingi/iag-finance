@@ -144,7 +144,7 @@ func main() {
 	})
 
 	if cfg.OverdueCronEnabled {
-		go worker.NewOverdueNotifier(cfg, ledgerSvc, eventBus).Run(ctx)
+		go worker.NewOverdueNotifier(cfg, repo, ledgerSvc, eventBus).Run(ctx)
 	}
 
 	// Relay the transactional outbox to the broker (no-op when publishing is off).
@@ -218,13 +218,14 @@ func main() {
 		}
 		consumers = append(consumers, c4)
 
-		// Quinary: iag.operations — iag-erp HR events → payroll employee/leave mirror.
+		// Quinary: iag.operations — iag-erp HR events → payroll employee/leave
+		// mirror, and released payroll runs → the general ledger.
 		c5, err := consumer.NewERP(consumer.Config{
 			Brokers:  cfg.KafkaBrokers,
 			GroupID:  "iag.finance.erp",
 			Topic:    cfg.KafkaOperationsTopic,
 			DLQTopic: cfg.KafkaDLQTopic,
-		}, repo, dlqProducer)
+		}, repo, ledgerSvc, dlqProducer)
 		if err != nil {
 			log.Fatal("finance erp consumer: ", err)
 		}

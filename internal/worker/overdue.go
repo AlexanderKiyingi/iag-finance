@@ -10,6 +10,7 @@ import (
 	"github.com/iag-finance/backend/internal/config"
 	"github.com/iag-finance/backend/internal/events"
 	"github.com/iag-finance/backend/internal/ledger"
+	"github.com/iag-finance/backend/internal/repository"
 )
 
 const overdueTemplate = "scm.payment-overdue"
@@ -17,12 +18,13 @@ const overdueTemplate = "scm.payment-overdue"
 // OverdueNotifier scans overdue AR and publishes scm-payment-overdue emails.
 type OverdueNotifier struct {
 	cfg    config.Config
+	repo   *repository.Repository
 	ledger *ledger.Service
 	events *events.Bus
 }
 
-func NewOverdueNotifier(cfg config.Config, ledgerSvc *ledger.Service, bus *events.Bus) *OverdueNotifier {
-	return &OverdueNotifier{cfg: cfg, ledger: ledgerSvc, events: bus}
+func NewOverdueNotifier(cfg config.Config, repo *repository.Repository, ledgerSvc *ledger.Service, bus *events.Bus) *OverdueNotifier {
+	return &OverdueNotifier{cfg: cfg, repo: repo, ledger: ledgerSvc, events: bus}
 }
 
 func (w *OverdueNotifier) Run(ctx context.Context) {
@@ -43,14 +45,34 @@ func (w *OverdueNotifier) Run(ctx context.Context) {
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
 
-	w.tick(ctx)
+	w.tickLocked(ctx)
 	for {
 		select {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			w.tick(ctx)
+			w.tickLocked(ctx)
 		}
+	}
+}
+
+// tickLocked runs the scan on one replica only.
+//
+// The side effect here leaves the platform: every overdue customer gets an
+// email. Two replicas means every customer is chased twice for the same debt,
+// which is the kind of duplicate a recipient notices and the business has to
+// apologise for. There is no consumer-side dedupe to fall back on.
+func (w *OverdueNotifier) tickLocked(ctx context.Context) {
+	ran, err := w.repo.WithJobLock(ctx, repository.JobLockOverdueNotifier, func(ctx context.Context) error {
+		w.tick(ctx)
+		return nil
+	})
+	if err != nil {
+		slog.Error("overdue notifier lock failed", "err", err)
+		return
+	}
+	if !ran {
+		slog.Debug("overdue notifier skipped; another instance holds the lock")
 	}
 }
 
