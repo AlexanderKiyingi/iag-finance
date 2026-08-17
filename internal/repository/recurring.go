@@ -96,8 +96,21 @@ func scanRecurring(rows interface {
 	return out, rows.Err()
 }
 
-// AdvanceRecurring moves a schedule's next_run forward to the given date.
-func (r *Repository) AdvanceRecurring(ctx context.Context, id uuid.UUID, next time.Time) error {
-	_, err := r.pool.Exec(ctx, `UPDATE recurring_invoices SET next_run = $2 WHERE id = $1`, id, next)
-	return err
+// ClaimRecurring advances a schedule's next_run, but only while it still holds
+// the value the caller read. It reports false when it did not — meaning another
+// instance of this service claimed the same period first.
+//
+// This is what makes the recurring invoicer safe to run on more than one
+// replica. An unconditional UPDATE would let two workers read the same due
+// schedule, both generate an invoice, and both advance the date; the customer
+// gets billed twice and the ledger carries two postings. A conditional update
+// is atomic in Postgres, so exactly one caller sees a row affected.
+func (r *Repository) ClaimRecurring(ctx context.Context, id uuid.UUID, from, next time.Time) (bool, error) {
+	tag, err := r.pool.Exec(ctx,
+		`UPDATE recurring_invoices SET next_run = $3 WHERE id = $1 AND next_run = $2`,
+		id, from, next)
+	if err != nil {
+		return false, err
+	}
+	return tag.RowsAffected() == 1, nil
 }

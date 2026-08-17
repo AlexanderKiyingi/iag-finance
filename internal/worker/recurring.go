@@ -53,6 +53,24 @@ func (w *RecurringInvoicer) generate(ctx context.Context) {
 		return
 	}
 	for _, s := range due {
+		// Claim the period before doing any work. Every replica of this service
+		// runs this ticker and sees the same due schedules, so the claim — not
+		// the listing — is what decides who generates the invoice.
+		//
+		// Claiming first makes this at-most-once: if invoice creation fails
+		// after the claim, the period is skipped and logged rather than retried.
+		// That is the deliberate direction to fail in. A missed invoice is
+		// visible in the logs and an operator can issue it; a duplicate has
+		// already been posted to the ledger and sent to the customer.
+		claimed, err := w.repo.ClaimRecurring(ctx, s.ID, s.NextRun, advanceRun(s.NextRun, s.Cadence))
+		if err != nil {
+			slog.Error("recurring: claim failed", "schedule", s.ID, "err", err)
+			continue
+		}
+		if !claimed {
+			continue // another replica owns this period
+		}
+
 		// Generate the invoice within the schedule's entity.
 		ectx := repository.WithEntity(ctx, s.EntityID)
 
@@ -85,10 +103,6 @@ func (w *RecurringInvoicer) generate(ctx context.Context) {
 		}
 		if _, err := w.ledger.IssueInvoice(ectx, inv.ID, "system:recurring"); err != nil {
 			slog.Error("recurring: issue invoice failed", "schedule", s.ID, "invoice", inv.ID, "err", err)
-			continue
-		}
-		if err := w.repo.AdvanceRecurring(ctx, s.ID, advanceRun(s.NextRun, s.Cadence)); err != nil {
-			slog.Error("recurring: advance failed", "schedule", s.ID, "err", err)
 			continue
 		}
 		slog.Info("recurring invoice generated", "schedule", s.ID, "invoice", inv.Number)
