@@ -240,6 +240,18 @@ type BookSideEffect func(ctx context.Context, tx pgx.Tx, entryID uuid.UUID) erro
 // This is the single booking primitive shared by the event consumer, manual
 // posting, payments, adjustments, reconciliation settlement, and reversals.
 func (r *Repository) BookPostedEntry(ctx context.Context, p CreateJournalParams, eventID, eventType string, postedAt time.Time, side BookSideEffect, audit *AuditInfo) (*domain.JournalEntry, error) {
+	// The event id arrives twice — as this argument, which drives dedupe and the
+	// processed_events row, and as p.SourceEventID, which is the column the
+	// unique index uq_journal_source_event actually watches. A caller that set
+	// one and not the other got a journal entry with a NULL source_event_id:
+	// the index only covers non-NULL values, so the structural guarantee against
+	// double-booking silently did not apply to that entry, and the replay path
+	// below could not find it to return. Keeping them in step here means the two
+	// cannot disagree.
+	if eventID != "" && p.SourceEventID == nil {
+		p.SourceEventID = &eventID
+	}
+
 	if eventID != "" {
 		processed, err := r.IsEventProcessed(ctx, eventID)
 		if err != nil {

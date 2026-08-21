@@ -65,7 +65,21 @@ func AppendChainTx(ctx context.Context, tx pgx.Tx, actor, eventType, message str
 		return nil, err
 	}
 
-	ts := time.Now().UTC()
+	// Truncated to microseconds because that is the precision Postgres stores.
+	//
+	// Verify recomputes each hash from the timestamp it reads back out of
+	// occurred_at (a timestamptz). time.Now() carries finer precision than that
+	// — 100ns on Windows, nanoseconds on Linux — so hashing the untruncated
+	// value produced a digest over a string the database could never return:
+	// ".0731772Z" went in, ".073177Z" came back, and the recomputed hash
+	// differed. The chain then reported itself broken on the very first entry,
+	// with nothing tampered. A tamper detector that cries wolf is not a control,
+	// and GET /audit/events/verify answered 409 for an intact ledger.
+	//
+	// Rows written before this fix still fail verification: their stored digests
+	// cover a timestamp that cannot be reproduced. They need a documented
+	// re-baseline — see docs/INTEGRATION_CONTRACTS.md §6.
+	ts := time.Now().UTC().Truncate(time.Microsecond)
 	h := hashchain.EventHash(ts.Format(time.RFC3339Nano), actor, eventType, message, prevHash)
 
 	var id int64
