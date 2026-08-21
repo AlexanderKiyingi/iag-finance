@@ -3,7 +3,6 @@ package ledger
 import (
 	"context"
 	"fmt"
-	"time"
 
 	"github.com/shopspring/decimal"
 
@@ -12,7 +11,7 @@ import (
 )
 
 const (
-	disposalCashAccount  = "1000" // cash / bank
+	cashAccount          = "1000" // cash / bank
 	fixedAssetsAccount   = "1500" // fixed assets (gross cost)
 	accumDepAccount      = "1510" // accumulated depreciation (contra-asset)
 	gainOnDisposalAcct   = "4200" // gain on asset disposal (other income)
@@ -34,7 +33,7 @@ const (
 // scrap/write-off with neither proceeds nor any value books nothing. Idempotent
 // on eventID; the period-close check and base-currency conversion ride the
 // shared booking path.
-func (s *Service) BookAssetDisposal(ctx context.Context, eventID, eventType, source, correlationID, currency, assetTag, method string, proceeds, bookValue decimal.Decimal) (*domain.JournalEntry, error) {
+func (s *Service) BookAssetDisposal(ctx context.Context, ref EventRef, currency, assetTag, method string, proceeds, bookValue decimal.Decimal) (*domain.JournalEntry, error) {
 	if proceeds.IsNegative() {
 		proceeds = decimal.Zero
 	}
@@ -45,24 +44,25 @@ func (s *Service) BookAssetDisposal(ctx context.Context, eventID, eventType, sou
 	if currency == "" {
 		currency = s.repo.BaseCurrency()
 	}
-	// Posting date is now; refuse a closed period before either path books.
-	if closed, err := s.repo.IsPeriodClosed(ctx, time.Now().UTC().Format("2006-01")); err != nil {
+	// Date the disposal by when it happened, and resolve it once so both the
+	// subledger path and the fallback file under the same period.
+	window, err := s.resolvePostingWindow(ctx, ref)
+	if err != nil {
 		return nil, err
-	} else if closed {
-		return nil, ErrPeriodClosed
 	}
 
-	desc := fmt.Sprintf("Asset disposal %s (%s)", assetTag, method)
+	desc := describeDeferral(fmt.Sprintf("Asset disposal %s (%s)", assetTag, method), window)
 
 	// Registered path: de-recognise system cost + accumulated depreciation and
 	// mark the asset disposed atomically (the fa_asset row is locked FOR UPDATE
 	// inside the booking tx, so a concurrent depreciation run cannot make the
 	// accumulated value stale).
-	entry, handled, err := s.repo.BookAssetDisposalSubledger(ctx, eventID, eventType, source, correlationID, currency, assetTag, desc, proceeds, &repository.AuditInfo{
-		Actor:     "system:" + source,
-		EventType: "ledger.asset.disposed",
-		Message:   desc,
-	})
+	entry, handled, err := s.repo.BookAssetDisposalSubledger(ctx, ref.ID, ref.Type, ref.Source, ref.CorrelationID, currency, assetTag, desc, proceeds,
+		window.Accounting, s.repo.RateOrOne(ctx, currency, window.Transaction), &repository.AuditInfo{
+			Actor:     "system:" + ref.Source,
+			EventType: "ledger.asset.disposed",
+			Message:   desc,
+		})
 	if err != nil {
 		return nil, err
 	}
@@ -73,7 +73,7 @@ func (s *Service) BookAssetDisposal(ctx context.Context, eventID, eventType, sou
 	// Fallback: not capitalised in the subledger — use the carried book value.
 	lines := make([]LineInput, 0, 3)
 	if proceeds.IsPositive() {
-		lines = append(lines, LineInput{AccountCode: disposalCashAccount, Debit: proceeds, Memo: "Disposal proceeds " + assetTag})
+		lines = append(lines, LineInput{AccountCode: cashAccount, Debit: proceeds, Memo: "Disposal proceeds " + assetTag})
 	}
 	if bookValue.IsPositive() {
 		lines = append(lines, LineInput{AccountCode: fixedAssetsAccount, Credit: bookValue, Memo: "Asset de-recognition " + assetTag})
@@ -88,5 +88,5 @@ func (s *Service) BookAssetDisposal(ctx context.Context, eventID, eventType, sou
 	if len(lines) == 0 {
 		return nil, nil
 	}
-	return s.BookFromEvent(ctx, eventID, eventType, source, correlationID, desc, currency, lines)
+	return s.BookFromEvent(ctx, ref, desc, currency, lines)
 }

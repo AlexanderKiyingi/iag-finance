@@ -378,7 +378,7 @@ func (s *Service) ReopenPeriod(ctx context.Context, period string, by *uuid.UUID
 	return s.repo.SetPeriodStatus(ctx, period, "open", by)
 }
 
-func (s *Service) BookFromEvent(ctx context.Context, eventID, eventType, source, correlationID, description, currency string, lines []LineInput) (*domain.JournalEntry, error) {
+func (s *Service) BookFromEvent(ctx context.Context, ref EventRef, description, currency string, lines []LineInput) (*domain.JournalEntry, error) {
 	if len(lines) == 0 {
 		return nil, ErrEmptyEntry
 	}
@@ -391,35 +391,33 @@ func (s *Service) BookFromEvent(ctx context.Context, eventID, eventType, source,
 		return nil, err
 	}
 
-	// Posting date is "now" — the instant the event hits the ledger. Refuse to
-	// book into a period an operator has closed (open by default).
-	postingDate := time.Now().UTC()
-	closed, err := s.repo.IsPeriodClosed(ctx, postingDate.Format("2006-01"))
+	// The entry is dated by when the event happened, not when it arrived, and
+	// is refused only when there is no open period to file it in at all.
+	window, err := s.resolvePostingWindow(ctx, ref)
 	if err != nil {
 		return nil, err
 	}
-	if closed {
-		return nil, ErrPeriodClosed
-	}
+	description = describeDeferral(description, window)
 
-	// Convert to base at the event-date rate (defaults to 1 for base currency).
-	fxRate := s.repo.RateOrOne(ctx, currency, postingDate)
+	// Convert to base at the transaction-date rate (1 for base currency).
+	fxRate := s.repo.RateOrOne(ctx, currency, window.Transaction)
 
 	// Single transaction: entry + lines + processed_events commit together, and
 	// the partial-unique index on source_event_id makes concurrent redelivery
 	// idempotent (returns the already-booked entry instead of duplicating).
 	return s.repo.BookPostedEntry(ctx, repository.CreateJournalParams{
-		Description:   description,
-		SourceEventID: &eventID,
-		SourceService: optionalString(source),
-		CorrelationID: optionalString(correlationID),
-		Currency:      currency,
-		FXRate:        fxRate,
-		Lines:         resolved,
-	}, eventID, eventType, postingDate, nil, &repository.AuditInfo{
-		Actor:     "system:" + source,
+		Description:    description,
+		SourceEventID:  &ref.ID,
+		SourceService:  optionalString(ref.Source),
+		CorrelationID:  optionalString(ref.CorrelationID),
+		Currency:       currency,
+		FXRate:         fxRate,
+		AccountingDate: window.Accounting,
+		Lines:          resolved,
+	}, ref.ID, ref.Type, time.Now().UTC(), nil, &repository.AuditInfo{
+		Actor:     "system:" + ref.Source,
 		EventType: "ledger.booked",
-		Message:   fmt.Sprintf("%s booked from %s (%s)", eventType, source, description),
+		Message:   fmt.Sprintf("%s booked from %s (%s)", ref.Type, ref.Source, description),
 	})
 }
 

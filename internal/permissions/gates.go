@@ -41,6 +41,11 @@ func RouteGates() []RouteGate {
 		{"POST", "/integrations/banking/lines/:lineId/confirm", granular("finance.manage_banking")},
 		{"POST", "/integrations/banking/lines/:lineId/reject", granular("finance.manage_banking")},
 		{"POST", "/integrations/banking/sync", granular("finance.manage_banking")},
+		// Matching a settled disbursement to the document it paid is the same
+		// reconciliation act as matching a bank line, so it shares the gate
+		// rather than adding a permission that would have to be granted again
+		// everywhere before the worklist could be worked.
+		{"POST", "/payments-clearing/:id/clear", granular("finance.manage_banking")},
 
 		// General ledger
 		{"POST", "/chart-of-accounts", granular("finance.manage_coa")},

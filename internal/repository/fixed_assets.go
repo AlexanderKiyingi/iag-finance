@@ -318,7 +318,7 @@ func (r *Repository) RunDepreciation(ctx context.Context, period string, postedA
 //   - (nil, true, nil)    asset already disposed → no-op
 //   - (nil, false, nil)   asset not in the subledger → caller falls back to the
 //     hand-entered book value.
-func (r *Repository) BookAssetDisposalSubledger(ctx context.Context, eventID, eventType, source, correlationID, currency, assetRef, description string, proceeds decimal.Decimal, audit *AuditInfo) (*domain.JournalEntry, bool, error) {
+func (r *Repository) BookAssetDisposalSubledger(ctx context.Context, eventID, eventType, source, correlationID, currency, assetRef, description string, proceeds decimal.Decimal, accountingDate time.Time, fxRate decimal.Decimal, audit *AuditInfo) (*domain.JournalEntry, bool, error) {
 	if eventID != "" {
 		processed, err := r.IsEventProcessed(ctx, eventID)
 		if err != nil {
@@ -407,13 +407,15 @@ func (r *Repository) BookAssetDisposalSubledger(ctx context.Context, eventID, ev
 		corr = &correlationID
 	}
 	entryID, err := r.insertPostedEntryTx(ctx, tx, CreateJournalParams{
-		EntryNumber:   entryNumber,
-		Description:   description,
-		SourceEventID: srcEvent,
-		SourceService: srcSvc,
-		CorrelationID: corr,
-		Currency:      currency,
-		Lines:         lines,
+		EntryNumber:    entryNumber,
+		Description:    description,
+		SourceEventID:  srcEvent,
+		SourceService:  srcSvc,
+		CorrelationID:  corr,
+		Currency:       currency,
+		FXRate:         fxRate,
+		AccountingDate: accountingDate,
+		Lines:          lines,
 	}, time.Now().UTC())
 	if err != nil {
 		if eventID != "" && IsUniqueViolation(err) {

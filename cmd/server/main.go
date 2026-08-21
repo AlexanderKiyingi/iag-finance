@@ -194,13 +194,14 @@ func main() {
 		}
 		consumers = append(consumers, c2)
 
-		// Tertiary: iag.supply-chain — scm.party.* for AP party_id backfill.
+		// Tertiary: iag.supply-chain — scm.party.* for AP party_id backfill, and
+		// scm.farmer_payment.recorded → the coffee payable.
 		c3, err := consumer.NewSupplyChain(consumer.Config{
 			Brokers:  cfg.KafkaBrokers,
 			GroupID:  "iag.finance.supply-chain",
 			Topic:    cfg.KafkaSupplyChainTopic,
 			DLQTopic: cfg.KafkaDLQTopic,
-		}, repo, dlqProducer)
+		}, repo, ledgerSvc, eventBus, dlqProducer)
 		if err != nil {
 			log.Fatal("finance supply-chain consumer: ", err)
 		}
@@ -244,12 +245,13 @@ func main() {
 		consumers = append(consumers, c6)
 
 		// Septenary: iag.payments — payments.settled → book the disbursement
-		// (Dr inventory/expense, Cr cash). Closes the operational money-out loop.
+		// (Dr clearing/inventory, Cr cash). Closes the operational money-out loop.
 		c7, err := consumer.New(consumer.Config{
-			Brokers:  cfg.KafkaBrokers,
-			GroupID:  "iag.finance.payments",
-			Topic:    cfg.KafkaPaymentsTopic,
-			DLQTopic: cfg.KafkaDLQTopic,
+			Brokers:                 cfg.KafkaBrokers,
+			GroupID:                 "iag.finance.payments",
+			Topic:                   cfg.KafkaPaymentsTopic,
+			DLQTopic:                cfg.KafkaDLQTopic,
+			CoffeePayoutViaClearing: cfg.CoffeePayoutViaClearing,
 		}, ledgerSvc, auditSvc, eventBus, dlqProducer)
 		if err != nil {
 			log.Fatal("finance payments consumer: ", err)

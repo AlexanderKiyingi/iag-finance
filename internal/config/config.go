@@ -29,7 +29,7 @@ type Config struct {
 	// limiter keys on the real, non-spoofable client IP. Empty = gin default.
 	TrustedProxies []string
 	// RateLimitPerMin is the per-principal (or per-IP) budget on the /v1 API.
-	RateLimitPerMin         int
+	RateLimitPerMin    int
 	EnableConsumer     bool
 	EnableEventPublish bool
 	// CoffeePayoutViaClearing routes a settled coffee payout through Payments

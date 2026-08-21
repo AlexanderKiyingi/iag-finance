@@ -55,7 +55,7 @@
     },
     {
       "codename": "finance.manage_banking",
-      "description": "Bank statements, reconciliation matching and feed sync"
+      "description": "Bank statements, reconciliation matching (including payments clearing) and feed sync"
     },
     {
       "codename": "finance.manage_coa",
@@ -210,6 +210,14 @@
     {
       "method": "POST",
       "path": "/integrations/banking/sync",
+      "permissions": [
+        "finance.manage_banking",
+        "finance.change_ledger"
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/payments-clearing/:id/clear",
       "permissions": [
         "finance.manage_banking",
         "finance.change_ledger"

@@ -4,6 +4,7 @@ import (
 	"errors"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/alvor-technologies/iag-platform-go/apierr"
 	"github.com/gin-gonic/gin"
@@ -153,6 +154,21 @@ func posLines(r posReceipt) ([]ledger.LineInput, error) {
 	return lines, nil
 }
 
+// parsePOSTime reads the till's receipt timestamp. A missing or unreadable one
+// yields the zero time, which the ledger treats as "date it on arrival" — the
+// behaviour every POS receipt had before the field was honoured.
+func parsePOSTime(s string) time.Time {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return time.Time{}
+	}
+	t, err := time.Parse(time.RFC3339, s)
+	if err != nil {
+		return time.Time{}
+	}
+	return t.UTC()
+}
+
 func (a *API) ingestOnePOSReceipt(c *gin.Context, terminal string, r posReceipt) posResult {
 	ref := strings.TrimSpace(r.Reference)
 	out := posResult{Reference: ref}
@@ -179,8 +195,17 @@ func (a *API) ingestOnePOSReceipt(c *gin.Context, terminal string, r posReceipt)
 	// The receipt reference is the idempotency key: BookFromEvent dedupes on it,
 	// so a resent batch collides with the original booking instead of doubling
 	// the day's takings.
-	entry, err := a.Ledger.BookFromEvent(
-		c.Request.Context(), ref, "pos.receipt", "iag.pos", terminal, desc, currency, lines)
+	//
+	// OccurredAt is the till's own timestamp, which is what dates the entry. A
+	// terminal that loses connectivity and uploads yesterday's trading late
+	// books it on the day it traded, not the day it reconnected.
+	entry, err := a.Ledger.BookFromEvent(c.Request.Context(), ledger.EventRef{
+		ID:            ref,
+		Type:          "pos.receipt",
+		Source:        "iag.pos",
+		CorrelationID: terminal,
+		OccurredAt:    parsePOSTime(r.OccurredAt),
+	}, desc, currency, lines)
 	if err != nil {
 		if errors.Is(err, ledger.ErrDuplicateEvent) {
 			out.Status = "duplicate"

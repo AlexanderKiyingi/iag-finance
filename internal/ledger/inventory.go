@@ -35,6 +35,24 @@ var CostNeutralMovements = map[string]string{
 	"asset_dispose":  "booked from warehouse.asset.disposed, not the movement",
 }
 
+// SourceDocProcurementGRN marks a warehouse movement that exists because a
+// procurement goods-receipt note was posted, as opposed to stock arriving by
+// some other route (field intake, a customer return, a production output).
+//
+// It is the answer to a double-count. One physical delivery against a purchase
+// order raises two events: procurement.grn.posted, which finance accrues from,
+// and warehouse.movement.posted for the same goods once they are put away. Both
+// credited GR/IR clearing, and the vendor invoice cleared only one — so the cost
+// landed twice, once in expense and once in inventory, and 2150 kept a permanent
+// credit equal to the receipt value. Neither entry is unbalanced, so nothing
+// downstream would have complained.
+//
+// The receipt has to be booked exactly once, by whichever event sees every
+// receipt. That is the GRN: purchases that never touch a warehouse still have
+// one, and the three-way match is already keyed to it by PO reference. So the
+// warehouse leg stands down for this provenance and only this provenance.
+const SourceDocProcurementGRN = "procurement_grn"
+
 // BookInventoryMovement books the GL effect of a valued stock movement:
 //
 //	receipt    → Dr 1400 Inventory / Cr 2150 GR/IR      (goods in, awaiting bill)
@@ -51,7 +69,7 @@ var CostNeutralMovements = map[string]string{
 // Idempotent on eventID (the warehouse movement_id) via BookFromEvent. Returns
 // (nil, nil) — a clean no-op — when totalCost is zero or absent, which is what
 // keeps the consumer dormant until warehouse emits valued movements.
-func (s *Service) BookInventoryMovement(ctx context.Context, eventID, eventType, source, correlationID, movementType, ref, currency string, totalCost decimal.Decimal) (*domain.JournalEntry, error) {
+func (s *Service) BookInventoryMovement(ctx context.Context, ref EventRef, movementType, sourceDocType, docRef, currency string, totalCost decimal.Decimal) (*domain.JournalEntry, error) {
 	if currency == "" {
 		currency = s.repo.BaseCurrency()
 	}
@@ -61,11 +79,11 @@ func (s *Service) BookInventoryMovement(ctx context.Context, eventID, eventType,
 	}
 
 	memo := "Inventory " + movementType
-	if ref != "" {
-		memo += " " + ref
+	if docRef != "" {
+		memo += " " + docRef
 	}
 
-	lines := linesForMovement(movementType, amt, totalCost, memo)
+	lines := linesForMovement(movementType, sourceDocType, amt, totalCost, memo)
 	if len(lines) == 0 {
 		// Cost-neutral by design, or a type this service does not know about.
 		// Either way there is no honest posting to make;
@@ -75,10 +93,10 @@ func (s *Service) BookInventoryMovement(ctx context.Context, eventID, eventType,
 	}
 
 	desc := "Inventory movement " + movementType
-	if ref != "" {
-		desc += " " + ref
+	if docRef != "" {
+		desc += " " + docRef
 	}
-	return s.BookFromEvent(ctx, eventID, eventType, source, correlationID, desc, currency, lines)
+	return s.BookFromEvent(ctx, ref, desc, currency, lines)
 }
 
 // linesForMovement is the movement-type → journal-lines mapping, pure so the
@@ -87,9 +105,15 @@ func (s *Service) BookInventoryMovement(ctx context.Context, eventID, eventType,
 //
 // amt is the absolute value; totalCost keeps its sign, which is what tells an
 // adjustment whether stock went up or down.
-func linesForMovement(movementType string, amt, totalCost decimal.Decimal, memo string) []LineInput {
+func linesForMovement(movementType, sourceDocType string, amt, totalCost decimal.Decimal, memo string) []LineInput {
 	switch movementType {
 	case "receipt":
+		if sourceDocType == SourceDocProcurementGRN {
+			// Already accrued from procurement.grn.posted, against the same
+			// goods and the same GR/IR account. Booking here as well is the
+			// double-count SourceDocProcurementGRN exists to prevent.
+			return nil
+		}
 		return []LineInput{
 			{AccountCode: inventoryAccount, Debit: amt, Memo: memo},
 			{AccountCode: grirAccount, Credit: amt, Memo: memo},

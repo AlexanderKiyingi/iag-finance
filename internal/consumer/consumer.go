@@ -26,6 +26,11 @@ type Config struct {
 	// DLQTopic receives messages whose handler returned a Permanent error or
 	// exceeded retries. Empty disables DLQ.
 	DLQTopic string
+	// CoffeePayoutViaClearing routes a settled coffee payout through Payments
+	// Clearing instead of capitalising it to Inventory. Turn it on only once
+	// iag-supply-chain is emitting scm.farmer_payment.recorded, which is what
+	// puts the coffee into stock at purchase. See disbursementDebit.
+	CoffeePayoutViaClearing bool
 }
 
 // Consumer wraps a platform-go events.Consumer with finance-specific handlers.
@@ -40,7 +45,7 @@ type Consumer struct {
 // New builds a Consumer that publishes its DLQ via the supplied producer (may
 // be nil to disable DLQ).
 func New(cfg Config, ledgerSvc *ledger.Service, auditSvc *auditlog.Service, bus *events.Bus, dlq *platformevents.Producer) (*Consumer, error) {
-	h := &financeHandler{ledger: ledgerSvc, audit: auditSvc, bus: bus}
+	h := &financeHandler{ledger: ledgerSvc, audit: auditSvc, bus: bus, coffeePayoutViaClearing: cfg.CoffeePayoutViaClearing}
 	inner, err := platformevents.NewConsumer(platformevents.ConsumerConfig{
 		Brokers:     cfg.Brokers,
 		Topic:       cfg.Topic,
@@ -72,6 +77,8 @@ type financeHandler struct {
 	// first, with invoice.posted enqueued in the same transaction, so the
 	// journal follows from the item rather than being booked beside it.
 	bus *events.Bus
+	// coffeePayoutViaClearing — see Config.CoffeePayoutViaClearing.
+	coffeePayoutViaClearing bool
 }
 
 func (h *financeHandler) Handle(ctx context.Context, env platformevents.Envelope) error {
@@ -115,6 +122,10 @@ type invoicePostedData struct {
 	TaxCode       string `json:"taxCode"`
 	// Quantity, when present, is the invoiced quantity for three-way qty matching.
 	Quantity string `json:"quantity"`
+	// InventoryValue is the portion of the net that capitalises to stock rather
+	// than being expensed — a coffee cherry purchase capitalises in full. Only
+	// meaningful without a PoRef, since a PO's net clears GR/IR instead.
+	InventoryValue string `json:"inventoryValue"`
 }
 
 type fleetFuelRecordedData struct {
@@ -154,7 +165,7 @@ func (h *financeHandler) handleSaleCompleted(ctx context.Context, env platformev
 	} else {
 		lines = append(lines, ledger.LineInput{AccountCode: "4000", Credit: amount, Memo: "Revenue"})
 	}
-	entry, err := h.ledger.BookFromEvent(ctx, env.ID, env.Type, env.Source, env.CorrelationID, desc, data.Currency, lines)
+	entry, err := h.ledger.BookFromEvent(ctx, eventRef(env), desc, data.Currency, lines)
 	if err == nil {
 		h.logBooked(ctx, env, entry)
 		h.linkOpenItem(ctx, env.Type, data.DocumentRef, entry, env.ID)
@@ -180,8 +191,9 @@ func (h *financeHandler) handleInvoicePosted(ctx context.Context, env platformev
 	}
 	// Books AP, clearing any GR/IR accrual for the PO and splitting VAT when the
 	// event carries it. poRef "" + vat 0 reduces to the prior Dr 5000 / Cr 2000.
-	entry, err := h.ledger.BookAPInvoice(ctx, env.ID, env.Type, env.Source, env.CorrelationID, desc,
+	entry, err := h.ledger.BookAPInvoice(ctx, eventRef(env), desc,
 		data.Currency, strings.TrimSpace(data.PoRef), amount, parseAmount(data.VatAmount),
+		parseAmount(strings.TrimSpace(data.InventoryValue)),
 		data.ReverseCharge, strings.TrimSpace(data.TaxCode), parseAmount(strings.TrimSpace(data.Quantity)))
 	if err == nil {
 		h.logBooked(ctx, env, entry)
@@ -269,22 +281,31 @@ type paymentsSettledData struct {
 // disbursement settles. Cash (1000) is always the credit — money has left the
 // business.
 //
-// Only coffee_payout is classified directly: it has no prior finance document
-// (there is no cherry-intake→AP bridge), so it capitalises straight to Inventory.
-// Every other category lands in Payments Clearing (1050); finance reconciles that
+// Every category lands in Payments Clearing (1050); finance reconciles that
 // control account against the originating document (vendor invoice, payroll run,
 // loan agreement, insurance claim). Routing through clearing — rather than
 // guessing COGS/AP/expense here — avoids both misclassifying disbursements and
 // double-booking against finance's native AP-payment / payroll GL paths.
-func disbursementDebit(category string) (code, memo string) {
-	if category == "coffee_payout" {
+//
+// coffee_payout used to be the exception, capitalising straight to Inventory
+// because a cherry purchase had no prior finance document to settle against.
+// It has one now: scm.farmer_payment.recorded raises the payable and capitalises
+// the stock when the purchase is priced, so the payout is a settlement like any
+// other. Leaving it on 1400 would capitalise the same coffee twice — once at
+// purchase and again at payment.
+//
+// coffeePayoutViaClearing gates the switch because the two halves deploy
+// separately: until iag-supply-chain emits the payable, a payout routed to
+// clearing would leave the coffee in no asset account at all.
+func disbursementDebit(category string, coffeePayoutViaClearing bool) (code, memo string) {
+	if category == "coffee_payout" && !coffeePayoutViaClearing {
 		return "1400", "Coffee cherry purchase (inventory)"
 	}
 	label := category
 	if label == "" {
 		label = "unclassified"
 	}
-	return "1050", "Payments clearing — " + label
+	return ledger.PaymentsClearingAccount, "Payments clearing — " + label
 }
 
 func (h *financeHandler) handlePaymentsSettled(ctx context.Context, env platformevents.Envelope) error {
@@ -296,7 +317,7 @@ func (h *financeHandler) handlePaymentsSettled(ctx context.Context, env platform
 	if amount.LessThanOrEqual(decimal.Zero) {
 		return nil
 	}
-	debitCode, debitMemo := disbursementDebit(data.Category)
+	debitCode, debitMemo := disbursementDebit(data.Category, h.coffeePayoutViaClearing)
 	desc := "Payment settled"
 	if data.ReferenceNumber != "" {
 		desc += " — " + data.ReferenceNumber
@@ -307,9 +328,20 @@ func (h *financeHandler) handlePaymentsSettled(ctx context.Context, env platform
 	if currency == "" {
 		currency = "UGX"
 	}
-	entry, err := h.ledger.BookFromEvent(ctx, env.ID, env.Type, env.Source, env.CorrelationID, desc, currency, []ledger.LineInput{
-		{AccountCode: debitCode, Debit: amount, Memo: debitMemo},
-		{AccountCode: "1000", Credit: amount, Memo: "Cash disbursed"},
+	// Books the disbursement and, when it lands in clearing, the subledger row
+	// that says what is still waiting to be matched to a document.
+	entry, err := h.ledger.BookPaymentSettlement(ctx, eventRef(env), ledger.SettlementInput{
+		InstructionID:   data.InstructionID,
+		ReferenceNumber: data.ReferenceNumber,
+		OriginService:   data.OriginService,
+		Category:        data.Category,
+		PartyBusinessID: data.PartyBusinessID,
+		ProviderRef:     data.ProviderRef,
+		Amount:          amount,
+		Currency:        currency,
+		DebitAccount:    debitCode,
+		DebitMemo:       debitMemo,
+		Description:     desc,
 	})
 	if err == nil {
 		h.logBooked(ctx, env, entry)
@@ -350,6 +382,20 @@ func (h *financeHandler) logBooked(ctx context.Context, env platformevents.Envel
 			"entryNumber":     entry.EntryNumber,
 		},
 	})
+}
+
+// eventRef carries the envelope's identity and its time into the ledger, so the
+// posting is dated by when the fact happened rather than when this consumer
+// happened to read it. parseEnvTime yields the zero time for an envelope with
+// no usable time, which the ledger reads as "fall back to arrival".
+func eventRef(env platformevents.Envelope) ledger.EventRef {
+	return ledger.EventRef{
+		ID:            env.ID,
+		Type:          env.Type,
+		Source:        env.Source,
+		CorrelationID: env.CorrelationID,
+		OccurredAt:    parseEnvTime(env.Time),
+	}
 }
 
 // remarshal turns the generic map[string]any in env.Data into a typed struct.

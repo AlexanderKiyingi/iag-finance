@@ -72,10 +72,17 @@ func (h *procurementHandler) handleGRNPosted(ctx context.Context, env platformev
 	if q, ok := data["quantity"].(string); ok {
 		qty = parseAmount(strings.TrimSpace(q))
 	}
-	if _, err := h.ledger.BookGRNAccrual(ctx, env.ID, env.Type, env.Source, env.CorrelationID, currency, poRef, value, qty); err != nil {
+	// The stockable portion of the received value, which capitalises instead of
+	// being expensed. Absent on emitters predating the split, in which case the
+	// whole receipt is expensed exactly as before.
+	inventoryValue := decimal.Zero
+	if v, ok := data["inventory_value"].(string); ok {
+		inventoryValue = parseAmount(strings.TrimSpace(v))
+	}
+	if _, err := h.ledger.BookGRNAccrual(ctx, eventRef(env), currency, poRef, value, inventoryValue, qty); err != nil {
 		return err
 	}
-	slog.Info("finance GR/IR accrual from GRN", "poRef", poRef, "amount", amountStr)
+	slog.Info("finance GR/IR accrual from GRN", "poRef", poRef, "amount", amountStr, "inventoryValue", inventoryValue)
 	return nil
 }
 

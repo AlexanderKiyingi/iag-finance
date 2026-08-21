@@ -53,9 +53,14 @@ func (h *warehouseHandler) handleMovementPosted(ctx context.Context, env platfor
 		currency = "UGX"
 	}
 	totalCost := disposalAmount(data["total_cost"]) // shared numeric/string coercion
+	// Where the stock came from. A receipt raised by a procurement GRN is
+	// already accrued from procurement.grn.posted; booking it again here would
+	// count the same delivery twice. Absent on emitters predating the field,
+	// which reads as "not from a GRN" and books as before.
+	sourceDocType, _ := data["source_doc_type"].(string)
 
-	entry, err := h.ledger.BookInventoryMovement(ctx, env.ID, env.Type, env.Source, env.CorrelationID,
-		strings.TrimSpace(movementType), strings.TrimSpace(ref), currency, totalCost)
+	entry, err := h.ledger.BookInventoryMovement(ctx, eventRef(env),
+		strings.TrimSpace(movementType), strings.TrimSpace(sourceDocType), strings.TrimSpace(ref), currency, totalCost)
 	if err != nil {
 		return err
 	}
@@ -79,7 +84,7 @@ func (h *warehouseHandler) handleAssetDisposed(ctx context.Context, env platform
 	proceeds := disposalAmount(data["proceeds"])
 	bookValue := disposalAmount(data["book_value"])
 
-	entry, err := h.ledger.BookAssetDisposal(ctx, env.ID, env.Type, env.Source, env.CorrelationID, currency, assetTag, method, proceeds, bookValue)
+	entry, err := h.ledger.BookAssetDisposal(ctx, eventRef(env), currency, assetTag, method, proceeds, bookValue)
 	if err != nil {
 		return err
 	}

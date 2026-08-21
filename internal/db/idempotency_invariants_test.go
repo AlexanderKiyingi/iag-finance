@@ -71,6 +71,19 @@ func TestADocumentReferenceIdentifiesOneReceivable(t *testing.T) {
 	assertNotDropped(t, sql, "idx_ar_document_ref")
 }
 
+// One settlement leaves one row in the Payments Clearing subledger. Without
+// this, a redelivered payments.settled would add a second row and the 1050
+// control reconciliation — the thing that exists to reveal drift — would itself
+// report drift that was never there.
+func TestASettlementIdentifiesOneClearingItem(t *testing.T) {
+	sql := migrationsText(t)
+	create := regexp.MustCompile(`(?is)CREATE\s+UNIQUE\s+INDEX[^;]*ON\s+payments_clearing_items\s*\(\s*instruction_id\s*\)`)
+	if !create.MatchString(sql) {
+		t.Fatal("no unique index on payments_clearing_items(instruction_id): a redelivered settlement would double-count the clearing account")
+	}
+	assertNotDropped(t, sql, "uq_payments_clearing_instruction")
+}
+
 // A later migration dropping the index is the failure this is really watching
 // for: the CREATE stays in history and reads as though the guarantee holds.
 func assertNotDropped(t *testing.T, sql, index string) {

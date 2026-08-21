@@ -50,7 +50,7 @@ func TestEveryWarehouseMovementIsAccounted(t *testing.T) {
 // postingFor returns the lines a movement type would book, or nil when it falls
 // through to the cost-neutral default.
 func postingFor(movementType string) []LineInput {
-	lines := linesForMovement(movementType, decimal.NewFromInt(100), decimal.NewFromInt(100), "memo")
+	lines := linesForMovement(movementType, "", decimal.NewFromInt(100), decimal.NewFromInt(100), "memo")
 	if len(lines) == 0 {
 		return nil
 	}
@@ -60,13 +60,13 @@ func postingFor(movementType string) []LineInput {
 func TestProductionMovesValueThroughWIP(t *testing.T) {
 	amt := decimal.NewFromInt(500)
 
-	consume := linesForMovement("production_consume", amt, amt, "memo")
+	consume := linesForMovement("production_consume", "", amt, amt, "memo")
 	assertPosting(t, "production_consume", consume, map[string]decimal.Decimal{
 		wipAccount:       amt,       // material becomes work in progress
 		inventoryAccount: amt.Neg(), // and leaves stock
 	})
 
-	output := linesForMovement("production_output", amt, amt, "memo")
+	output := linesForMovement("production_output", "", amt, amt, "memo")
 	assertPosting(t, "production_output", output, map[string]decimal.Decimal{
 		inventoryAccount: amt,       // finished goods arrive
 		wipAccount:       amt.Neg(), // clearing the order's WIP
@@ -79,7 +79,7 @@ func TestConsumeAndOutputClearWIP(t *testing.T) {
 	amt := decimal.NewFromInt(1234)
 	net := decimal.Zero
 	for _, mt := range []string{"production_consume", "production_output"} {
-		for _, l := range linesForMovement(mt, amt, amt, "memo") {
+		for _, l := range linesForMovement(mt, "", amt, amt, "memo") {
 			if l.AccountCode == wipAccount {
 				net = net.Add(l.Debit).Sub(l.Credit)
 			}
@@ -94,7 +94,7 @@ func TestProductionDoesNotTouchCOGS(t *testing.T) {
 	// Material-only costing keeps production out of cost of sales entirely:
 	// value moves stock → WIP → stock, and only a later issue expenses it.
 	for _, mt := range []string{"production_consume", "production_output"} {
-		for _, l := range linesForMovement(mt, decimal.NewFromInt(10), decimal.NewFromInt(10), "memo") {
+		for _, l := range linesForMovement(mt, "", decimal.NewFromInt(10), decimal.NewFromInt(10), "memo") {
 			if l.AccountCode == cogsAccount {
 				t.Errorf("%s posts to COGS; production should move value through WIP, not expense it", mt)
 			}
@@ -105,7 +105,7 @@ func TestProductionDoesNotTouchCOGS(t *testing.T) {
 func TestInventoryPostingsBalance(t *testing.T) {
 	amt := decimal.NewFromInt(777)
 	for _, mt := range warehouseMovementTypes {
-		lines := linesForMovement(mt, amt, amt, "memo")
+		lines := linesForMovement(mt, "", amt, amt, "memo")
 		if len(lines) == 0 {
 			continue
 		}

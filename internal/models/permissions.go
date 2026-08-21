@@ -28,7 +28,7 @@ func PermissionDescriptors() []PermissionDescriptor {
 		{Name: "finance.post_journal", Description: "Post a draft journal entry to the GL (the checker half)"},
 		{Name: "finance.manage_ar", Description: "Accounts-receivable writes: AR items, receipts, credit/debit notes, late fees, billing"},
 		{Name: "finance.manage_ap", Description: "Accounts-payable writes: AP items/bills, vendor payments, debit notes"},
-		{Name: "finance.manage_banking", Description: "Bank statements, reconciliation matching and feed sync"},
+		{Name: "finance.manage_banking", Description: "Bank statements, reconciliation matching (including payments clearing) and feed sync"},
 		{Name: "finance.manage_coa", Description: "Create/modify chart-of-accounts structure"},
 		{Name: "finance.reverse_journal", Description: "Reverse a posted journal entry"},
 		{Name: "finance.close_period", Description: "Close/reopen fiscal periods and run year-end close"},

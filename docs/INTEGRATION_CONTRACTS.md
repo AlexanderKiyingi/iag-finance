@@ -86,6 +86,12 @@ create; defaults to today), not wall-clock posting time.
 Posting into a closed period → `422` (`accounting period is closed`). To back-date
 a correction into a closed month, reopen → post → re-close.
 
+**Event-driven postings** follow the same period control but resolve their date
+differently: they are dated by the event's `time`, and when that period is closed
+they file into the current open period with the deferral recorded on the entry
+description, rather than being refused. See
+[EVENT_CONTRACT.md §4.1](./EVENT_CONTRACT.md#41-dating-and-late-delivery).
+
 ---
 
 ## 4a. Fixed-asset subledger
@@ -114,6 +120,28 @@ the **base currency** (see MULTICURRENCY.md):
 | `GET /v1/reports/balance-sheet` | `?asOf=YYYY-MM-DD` (point-in-time; `?to=` accepted as alias) |
 | `GET /v1/reports/gl-account/:code` | `?from=&to=` — per-account postings with running base balance |
 | `GET /v1/reports/ar-aging`, `/ap-aging` | open AR/AP buckets, base currency |
+| `GET /v1/reports/control-reconciliation` | GL vs subledger for AR (1100), AP (2000), GR/IR (2150) and Payments Clearing (1050); `difference` of 0 is reconciled |
+
+### 5a. Payments Clearing worklist
+
+Operational disbursements settled by iag-payments land in **1050 Payments
+Clearing** rather than being classified on arrival — a settlement does not say
+whether it paid a vendor invoice, a payroll run, a loan or a claim, and guessing
+would either misclassify it or double-book against finance's own AP and payroll
+paths. These endpoints are how it gets emptied.
+
+| Endpoint | Effect |
+|----------|--------|
+| `GET /v1/payments-clearing?status=open` | The worklist: settled disbursements awaiting a document, with `ageDays`. `status=cleared` or `status=` (all) for audit. Gate `finance.view_ledger`. |
+| `POST /v1/payments-clearing/:id/clear` | Record the document this disbursement paid — body `{"documentRef":"..."}`, required. **404** if unknown or already cleared, so a double submission never overwrites the first match. Gate `finance.manage_banking`. |
+
+Clearing records the match; it posts no journal. Reclassifying money out of 1050
+into its final account is a ledger act with its own gates and period control, so
+working the queue cannot move the general ledger as a side effect.
+
+A clearing account is healthy when it *turns over*, not when its balance is
+small. Watch `ageDays` on the open list and the `1050` row of the control
+reconciliation together.
 
 Omitting the params returns the unbounded (inception-to-today) view. The trial
 balance response includes `totalDebit`, `totalCredit`, and a `balanced` boolean.
@@ -133,6 +161,16 @@ SHA-256 hash chain, attributed to the authenticated principal.
 
 Use `verify` in monitoring/compliance checks to detect tampering: any in-place
 edit, deletion, or reorder of a past entry breaks the chain.
+
+> **Re-baseline required once, on upgrade.** Chain hashes were computed over a
+> timestamp at Go's clock precision, which is finer than the microseconds
+> Postgres stores — so the recomputed hash never matched the stored one and
+> `verify` answered `409` on an intact chain. Appends now hash the truncated
+> timestamp and verify cleanly. Rows written *before* the fix still fail, because
+> their digests cover a timestamp the database cannot return. Verify will report
+> the first such row as `brokenAt`; treat that as the known baseline, not as
+> tampering, and archive-then-truncate `audit_events` to start a clean chain if
+> you need `verify` to be green.
 
 ---
 

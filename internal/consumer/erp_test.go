@@ -9,26 +9,6 @@ import (
 	"github.com/iag-finance/backend/internal/ledger"
 )
 
-func TestERPHandledTypes(t *testing.T) {
-	types := ERPHandledTypes()
-	if len(types) != 7 {
-		t.Fatalf("len = %d, want 7", len(types))
-	}
-	seen := map[string]bool{}
-	for _, et := range types {
-		if seen[et] {
-			t.Fatalf("duplicate %q", et)
-		}
-		seen[et] = true
-	}
-	if !seen["erp.employee.created"] || !seen["erp.leave.approved"] {
-		t.Fatalf("missing expected types: %#v", types)
-	}
-	if !seen["erp.payroll.run_posted"] {
-		t.Fatalf("payroll runs are not listed as handled: %#v", types)
-	}
-}
-
 // A run with no ref or period can never be posted, so it must be rejected
 // permanently rather than redelivered until the DLQ picks it up on age.
 func TestERPHandler_payrollMissingFields(t *testing.T) {

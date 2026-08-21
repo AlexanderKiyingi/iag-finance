@@ -258,14 +258,10 @@ func NewERP(cfg Config, repo *repository.Repository, ledgerSvc *ledger.Service, 
 	return &Consumer{inner: inner}, nil
 }
 
-// ERPHandledTypes lists event types consumed for payroll mirror (tests/docs).
-func ERPHandledTypes() []string {
-	return []string{
-		erpEmployeeCreated, erpEmployeeUpdated, erpEmployeeTerminated,
-		erpLeaveApproved, erpLeaveRejected, erpLeaveCancelled,
-		erpPayrollRunPosted,
-	}
-}
+// The ERP types this handler dispatches are declared with every other
+// subscription in handled.go. There used to be a second list here, and it had
+// already fallen behind by two types — the leave-balance and pay-rate events the
+// leave provision is measured from.
 
 // parseEnvTime parses the envelope's RFC3339 time, falling back to the zero
 // time (treated as "epoch" by the mirror's ordering guard) when absent/invalid.

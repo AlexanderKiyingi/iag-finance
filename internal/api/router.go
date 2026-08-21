@@ -200,6 +200,9 @@ func NewRouter(deps RouterDeps) *gin.Engine {
 		v1.GET("/reports/sales-by-item", ledgerRead, api.SalesByItem)
 		v1.GET("/reports/changes-in-equity", ledgerRead, api.ChangesInEquity)
 		v1.GET("/reports/control-reconciliation", ledgerRead, api.ControlReconciliation)
+		// The Payments Clearing (1050) worklist behind that reconciliation.
+		v1.GET("/payments-clearing", ledgerRead, api.ListPaymentsClearing)
+		w.POST("/payments-clearing/:id/clear", api.ClearPaymentsClearingItem)
 		v1.GET("/billing/invoices", ledgerRead, api.ListBillingInvoices)
 		w.POST("/billing/invoices", api.CreateInvoice)
 		v1.GET("/billing/invoices/:id", ledgerRead, api.GetBillingInvoice)

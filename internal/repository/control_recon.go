@@ -10,8 +10,8 @@ import (
 // ControlReconRow ties one subledger control account in the general ledger to
 // the sum of its open items, so a drift (GL ≠ subledger) is surfaced.
 type ControlReconRow struct {
-	Control     string `json:"control"`     // "Accounts Receivable" / "Accounts Payable"
-	AccountCode string `json:"accountCode"` // 1100 / 2000
+	Control     string `json:"control"`     // "Accounts Receivable" / "Payments Clearing" / …
+	AccountCode string `json:"accountCode"` // 1100 / 2000 / 2150 / 1050
 	GLBalance   string `json:"glBalance"`   // base-currency GL balance of the control account
 	Subledger   string `json:"subledger"`   // sum of open subledger item balances
 	Difference  string `json:"difference"`  // glBalance − subledger (0 = reconciled)
@@ -73,6 +73,26 @@ func (r *Repository) ControlReconciliation(ctx context.Context, entityIDs []uuid
 		return nil, err
 	}
 
+	// The two clearing accounts are control accounts as much as AR and AP are:
+	// money parks in them and is meant to leave again. Neither was reconciled,
+	// so a balance stuck in one looked the same as one turning over healthily.
+	grirGL, err := glBalance("2150", "credit")
+	if err != nil {
+		return nil, err
+	}
+	grirSub, err := r.openGRNIAccrualTotal(ctx)
+	if err != nil {
+		return nil, err
+	}
+	clearingGL, err := glBalance("1050", "debit")
+	if err != nil {
+		return nil, err
+	}
+	clearingSub, err := r.openPaymentsClearingTotal(ctx, entityIDs)
+	if err != nil {
+		return nil, err
+	}
+
 	mk := func(name, code string, gl, sub decimal.Decimal) ControlReconRow {
 		return ControlReconRow{
 			Control:     name,
@@ -85,5 +105,7 @@ func (r *Repository) ControlReconciliation(ctx context.Context, entityIDs []uuid
 	return []ControlReconRow{
 		mk("Accounts Receivable", "1100", arGL, arSub),
 		mk("Accounts Payable", "2000", apGL, apSub),
+		mk("GR/IR Clearing", "2150", grirGL, grirSub),
+		mk("Payments Clearing", "1050", clearingGL, clearingSub),
 	}, nil
 }

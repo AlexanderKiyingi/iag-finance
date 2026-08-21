@@ -12,6 +12,33 @@ import (
 	"github.com/iag-finance/backend/internal/repository"
 )
 
+// grnAccrualLines splits the goods-receipt debit between stock and period
+// expense, crediting GR/IR with the whole received value either way.
+//
+// Pure, so the split is testable without a ledger: this is the posting that used
+// to double-count, and the arithmetic is the guarantee that it no longer can.
+// inventoryValue is clamped into [0, value] — a nonsensical split from an
+// upstream emitter must not be able to unbalance the entry or invent a credit.
+func grnAccrualLines(value, inventoryValue decimal.Decimal) []LineInput {
+	stock := inventoryValue
+	if stock.IsNegative() {
+		stock = decimal.Zero
+	}
+	if stock.GreaterThan(value) {
+		stock = value
+	}
+	expense := value.Sub(stock)
+
+	lines := make([]LineInput, 0, 3)
+	if stock.IsPositive() {
+		lines = append(lines, LineInput{AccountCode: inventoryAccount, Debit: stock, Memo: "Goods received into stock"})
+	}
+	if expense.IsPositive() {
+		lines = append(lines, LineInput{AccountCode: grniExpenseAccount, Debit: expense, Memo: "Goods received (GRNI)"})
+	}
+	return append(lines, LineInput{AccountCode: grIRClearingAccount, Credit: value, Memo: "GR/IR accrual"})
+}
+
 const (
 	grniExpenseAccount  = "5000" // expense / COGS (goods received)
 	grIRClearingAccount = "2150" // GR/IR clearing (liability)
@@ -20,43 +47,51 @@ const (
 	apControlAccount    = "2000" // accounts payable
 )
 
-// BookGRNAccrual accrues the AP liability at goods receipt: Dr expense / Cr GR-IR
-// clearing for the received value, and raises the per-PO open accrual so a later
-// invoice can clear it. No-op without a PO reference (the accrual could never be
-// cleared) or a positive value. Idempotent on eventID via the shared booking
-// primitive; the accrual bump runs as a side-effect in the same transaction.
-func (s *Service) BookGRNAccrual(ctx context.Context, eventID, eventType, source, correlationID, currency, poRef string, value, qtyReceived decimal.Decimal) (*domain.JournalEntry, error) {
+// BookGRNAccrual accrues the AP liability at goods receipt — Cr GR/IR clearing
+// for the received value — and raises the per-PO open accrual so a later invoice
+// can clear it. No-op without a PO reference (the accrual could never be cleared)
+// or a positive value. Idempotent on ref.ID via the shared booking primitive; the
+// accrual bump runs as a side-effect in the same transaction.
+//
+// The debit is split: inventoryValue capitalises to stock, the remainder is
+// period expense. This is the goods receipt's *only* posting — see
+// grnReceiptLines for why the warehouse movement does not book one too.
+// An event carrying no split debits everything to expense, which is what every
+// emitter did before the split existed.
+//
+// The entry is dated by the receipt, not by when this consumer read the event,
+// and converts to base at that date's rate. It previously carried no FX rate at
+// all, so a foreign-currency receipt was recorded in base as though the figures
+// were already base — a USD 1,000 accrual sat in the trial balance as UGX 1,000.
+func (s *Service) BookGRNAccrual(ctx context.Context, ref EventRef, currency, poRef string, value, inventoryValue, qtyReceived decimal.Decimal) (*domain.JournalEntry, error) {
 	if poRef == "" || value.LessThanOrEqual(decimal.Zero) {
 		return nil, nil
 	}
 	if currency == "" {
 		currency = s.repo.BaseCurrency()
 	}
-	resolved, err := s.resolveLines(ctx, []LineInput{
-		{AccountCode: grniExpenseAccount, Debit: value, Memo: "Goods received (GRNI)"},
-		{AccountCode: grIRClearingAccount, Credit: value, Memo: "GR/IR accrual"},
-	})
+	resolved, err := s.resolveLines(ctx, grnAccrualLines(value, inventoryValue))
 	if err != nil {
 		return nil, err
 	}
-	postingDate := time.Now().UTC()
-	if closed, err := s.repo.IsPeriodClosed(ctx, postingDate.Format("2006-01")); err != nil {
+	window, err := s.resolvePostingWindow(ctx, ref)
+	if err != nil {
 		return nil, err
-	} else if closed {
-		return nil, ErrPeriodClosed
 	}
 	side := func(ctx context.Context, tx pgx.Tx, _ uuid.UUID) error {
 		return repository.AddGRNIAccrualTx(ctx, tx, poRef, currency, value, qtyReceived)
 	}
 	return s.repo.BookPostedEntry(ctx, repository.CreateJournalParams{
-		Description:   "Goods received accrual — PO " + poRef,
-		SourceEventID: &eventID,
-		SourceService: optionalString(source),
-		CorrelationID: optionalString(correlationID),
-		Currency:      currency,
-		Lines:         resolved,
-	}, eventID, eventType, postingDate, side, &repository.AuditInfo{
-		Actor:     "system:" + source,
+		Description:    describeDeferral("Goods received accrual — PO "+poRef, window),
+		SourceEventID:  &ref.ID,
+		SourceService:  optionalString(ref.Source),
+		CorrelationID:  optionalString(ref.CorrelationID),
+		Currency:       currency,
+		FXRate:         s.repo.RateOrOne(ctx, currency, window.Transaction),
+		AccountingDate: window.Accounting,
+		Lines:          resolved,
+	}, ref.ID, ref.Type, time.Now().UTC(), side, &repository.AuditInfo{
+		Actor:     "system:" + ref.Source,
 		EventType: "ledger.grni.accrued",
 		Message:   "GR/IR accrual for PO " + poRef,
 	})
@@ -71,17 +106,25 @@ func (s *Service) BookGRNAccrual(ctx context.Context, eventID, eventType, source
 //     expense / Cr GR-IR). The clearing nets to zero once both sides post, in
 //     EITHER order, so the expense is booked exactly once and an invoice that
 //     beats its GRN never double-counts.
-//   - Without a PO ref (services, fuel, ad-hoc), the net debits expense directly.
+//   - Without a PO ref (services, fuel, ad-hoc), the net debits expense — except
+//     for the inventoryValue portion, which capitalises to stock. A coffee
+//     cherry purchase is the case that needs this: it is bought as inventory and
+//     there is no purchase order behind it, so expensing it would charge the
+//     whole crop to profit on the day it arrived and leave the stock unrecorded.
 //
-// poRef "" + vat 0 reduces to the prior Dr expense / Cr AP. Idempotent on eventID;
+// poRef "" + vat 0 reduces to the prior Dr expense / Cr AP. Idempotent on ref.ID;
 // the accrual-clearing bookkeeping runs as a side-effect in the same transaction.
+//
+// Dated by the invoice event, and converted to base at that date's rate — this
+// path also carried no FX rate before, so a foreign-currency payable was
+// understated in base by whatever the rate was.
 //
 // reverseCharge marks a supply where the buyer self-assesses VAT (the supplier
 // charges none): the AP liability is the net only, and the buyer books both
 // recoverable input VAT and payable output VAT for net × the taxCode's rate — a
 // net-zero cash effect added to the same entry, so the reverse-charge VAT is
 // recognised exactly once alongside the AP booking.
-func (s *Service) BookAPInvoice(ctx context.Context, eventID, eventType, source, correlationID, description, currency, poRef string, gross, vat decimal.Decimal, reverseCharge bool, taxCode string, qtyInvoiced decimal.Decimal) (*domain.JournalEntry, error) {
+func (s *Service) BookAPInvoice(ctx context.Context, ref EventRef, description, currency, poRef string, gross, vat, inventoryValue decimal.Decimal, reverseCharge bool, taxCode string, qtyInvoiced decimal.Decimal) (*domain.JournalEntry, error) {
 	if gross.LessThanOrEqual(decimal.Zero) {
 		return nil, ErrEmptyEntry
 	}
@@ -103,12 +146,27 @@ func (s *Service) BookAPInvoice(ctx context.Context, eventID, eventType, source,
 		}
 	}
 
-	lines := make([]LineInput, 0, 5)
+	lines := make([]LineInput, 0, 6)
 	netToGRIR := poRef != "" && net.IsPositive()
-	if netToGRIR {
+	switch {
+	case netToGRIR:
 		lines = append(lines, LineInput{AccountCode: grIRClearingAccount, Debit: net, Memo: "GR/IR clearing"})
-	} else if net.IsPositive() {
-		lines = append(lines, LineInput{AccountCode: grniExpenseAccount, Debit: net, Memo: "Expense / COGS"})
+	case net.IsPositive():
+		// Split the net between stock and expense. Clamped into [0, net] so a
+		// bad figure upstream cannot unbalance the entry or invent a debit.
+		stock := inventoryValue
+		if stock.IsNegative() {
+			stock = decimal.Zero
+		}
+		if stock.GreaterThan(net) {
+			stock = net
+		}
+		if stock.IsPositive() {
+			lines = append(lines, LineInput{AccountCode: inventoryAccount, Debit: stock, Memo: "Purchased into stock"})
+		}
+		if expense := net.Sub(stock); expense.IsPositive() {
+			lines = append(lines, LineInput{AccountCode: grniExpenseAccount, Debit: expense, Memo: "Expense / COGS"})
+		}
 	}
 	if vat.IsPositive() {
 		lines = append(lines, LineInput{AccountCode: inputVATAccount, Debit: vat, Memo: "Input VAT"})
@@ -129,11 +187,9 @@ func (s *Service) BookAPInvoice(ctx context.Context, eventID, eventType, source,
 	if err != nil {
 		return nil, err
 	}
-	postingDate := time.Now().UTC()
-	if closed, err := s.repo.IsPeriodClosed(ctx, postingDate.Format("2006-01")); err != nil {
+	window, err := s.resolvePostingWindow(ctx, ref)
+	if err != nil {
 		return nil, err
-	} else if closed {
-		return nil, ErrPeriodClosed
 	}
 	if currency == "" {
 		currency = s.repo.BaseCurrency()
@@ -148,15 +204,17 @@ func (s *Service) BookAPInvoice(ctx context.Context, eventID, eventType, source,
 		}
 	}
 	return s.repo.BookPostedEntry(ctx, repository.CreateJournalParams{
-		Description:   description,
-		SourceEventID: &eventID,
-		SourceService: optionalString(source),
-		CorrelationID: optionalString(correlationID),
-		Currency:      currency,
-		Lines:         resolved,
-	}, eventID, eventType, postingDate, side, &repository.AuditInfo{
-		Actor:     "system:" + source,
+		Description:    describeDeferral(description, window),
+		SourceEventID:  &ref.ID,
+		SourceService:  optionalString(ref.Source),
+		CorrelationID:  optionalString(ref.CorrelationID),
+		Currency:       currency,
+		FXRate:         s.repo.RateOrOne(ctx, currency, window.Transaction),
+		AccountingDate: window.Accounting,
+		Lines:          resolved,
+	}, ref.ID, ref.Type, time.Now().UTC(), side, &repository.AuditInfo{
+		Actor:     "system:" + ref.Source,
 		EventType: "ledger.booked",
-		Message:   description,
+		Message:   describeDeferral(description, window),
 	})
 }
