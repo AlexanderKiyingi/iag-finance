@@ -178,5 +178,65 @@ func (a *API) decideApproval(c *gin.Context, approve bool) {
 		}
 		return
 	}
+	a.notifyApprovalOutcome(c, ap, prog, approve)
 	c.JSON(http.StatusOK, gin.H{"approval": ap, "progress": prog})
+}
+
+// notifyApprovalOutcome emails the outcome of a tiered finance approval.
+//
+// A decision goes to whoever requested it — they are the one waiting on it and
+// are recorded on the approval. A partial approval that still needs a further
+// tier goes to the approvals desk (APPROVALS_NOTIFY_EMAIL), because the next
+// approver is identified by a permission code, not an address: there is nobody
+// individual to write to. With no desk configured that step is skipped.
+//
+// Best effort throughout: the decision is already committed, so a notification
+// problem must not turn a successful approval into an HTTP error.
+func (a *API) notifyApprovalOutcome(c *gin.Context, ap *repository.Approval, prog *repository.ApprovalProgress, approved bool) {
+	if a.Events == nil || ap == nil || !a.Events.NotificationsEnabled() {
+		return
+	}
+	ctx := c.Request.Context()
+	what := strings.TrimSpace(ap.Description)
+	if what == "" {
+		what = ap.TargetType + " " + ap.ID.String()
+	}
+	amount := ap.Amount.String() + " " + ap.Currency
+
+	// Still mid-chain: tell the desk it is waiting, not the requester.
+	if approved && prog != nil && !prog.Complete {
+		desk := strings.TrimSpace(a.Cfg.ApprovalsNotifyEmail)
+		if desk == "" {
+			return
+		}
+		tier := ""
+		if prog.NextTier != nil {
+			tier = " tier " + strconv.Itoa(*prog.NextTier)
+		}
+		a.Events.PublishNotificationID(ctx,
+			"approval-pending:"+ap.ID.String()+":"+strconv.Itoa(len(prog.ApprovedTiers)),
+			desk, "approval.pending", map[string]string{
+				"Title": "Approval awaiting" + tier + ": " + what,
+				"Body": what + " (" + amount + ") requested by " + ap.RequestedBy +
+					" has cleared " + strconv.Itoa(len(prog.ApprovedTiers)) + " of " +
+					strconv.Itoa(len(prog.RequiredTiers)) + " tiers and needs " + prog.NextPerm + ".",
+			})
+		return
+	}
+
+	if ap.RequestedBy == "" {
+		return
+	}
+	outcome := "rejected"
+	if approved {
+		outcome = "approved"
+	}
+	// Keyed on the approval and its terminal outcome, so a retried request does
+	// not email twice while a later state change still can.
+	a.Events.PublishNotificationID(ctx,
+		"approval-decision:"+ap.ID.String()+":"+outcome,
+		ap.RequestedBy, "approval.decision", map[string]string{
+			"Title": "Approval " + outcome + ": " + what,
+			"Body":  what + " (" + amount + ") was " + outcome + ".",
+		})
 }

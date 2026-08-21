@@ -30,8 +30,18 @@ type Config struct {
 	TrustedProxies []string
 	// RateLimitPerMin is the per-principal (or per-IP) budget on the /v1 API.
 	RateLimitPerMin         int
-	EnableConsumer          bool
-	EnableEventPublish      bool
+	EnableConsumer     bool
+	EnableEventPublish bool
+	// CoffeePayoutViaClearing routes a settled coffee payout through Payments
+	// Clearing (1050) rather than capitalising it to Inventory (1400).
+	//
+	// Default off, because the two halves of the coffee-purchase bridge deploy
+	// separately. Turn it on only once iag-supply-chain is emitting
+	// scm.farmer_payment.recorded — that event is what puts the coffee into
+	// stock and raises the farmer payable. Flip it too early and a payout
+	// reaches neither inventory nor a payable; leave it off too long and the
+	// same coffee capitalises twice, at purchase and again at payment.
+	CoffeePayoutViaClearing bool
 	KafkaBrokers            []string
 	KafkaClientID           string
 	KafkaGroupID            string
@@ -79,6 +89,12 @@ type Config struct {
 	OverdueCronInterval time.Duration
 	OverdueNotifyEmail  string
 	OverdueNotifyHref   string
+
+	// ApprovalsNotifyEmail receives "still awaiting a further tier" notices for
+	// tiered approvals. The next approver is identified by permission code
+	// rather than by address, so there is no individual to notify; unset means
+	// only the requester is told, on the final decision.
+	ApprovalsNotifyEmail string
 
 	// RequireApproval enforces tiered approval: a journal post or AP/AR payment
 	// whose amount reaches an approval band is rejected on the direct endpoint and
@@ -158,6 +174,8 @@ func Load() (Config, error) {
 		RateLimitPerMin:    rlPerMin,
 		EnableConsumer:     getEnv("ENABLE_CONSUMER", defaultConsumer(env)) == "true",
 		EnableEventPublish: getEnv("ENABLE_EVENT_PUBLISH", "true") == "true",
+
+		CoffeePayoutViaClearing: getEnv("COFFEE_PAYOUT_VIA_CLEARING", "false") == "true",
 		// Unset means "no broker configured", not localhost. A localhost default
 		// in production builds a live producer against a dead address, and every
 		// publish is synchronous and fully-acked — so each one blocks a request
@@ -199,6 +217,7 @@ func Load() (Config, error) {
 		OverdueCronInterval:     overdueCronInterval(),
 		OverdueNotifyEmail:      strings.TrimSpace(os.Getenv("OVERDUE_NOTIFY_EMAIL")),
 		OverdueNotifyHref:       strings.TrimSpace(os.Getenv("OVERDUE_NOTIFY_HREF")),
+		ApprovalsNotifyEmail:    strings.TrimSpace(os.Getenv("APPROVALS_NOTIFY_EMAIL")),
 	}
 
 	return cfg, cfg.validate()

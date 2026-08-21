@@ -118,11 +118,15 @@ func (a *API) EmailInvoice(c *gin.Context) {
 		return
 	}
 
-	a.Events.PublishNotification(c.Request.Context(), recipient, "invoice-ready-email", map[string]string{
-		"documentRef": item.DocumentRef,
-		"amount":      item.Amount,
-		"currency":    item.Currency,
-	})
+	// Keyed by document so re-sending the same invoice to the same address is
+	// idempotent, while a different invoice is a different notification.
+	a.Events.PublishNotificationID(c.Request.Context(),
+		"invoice-ready:"+item.DocumentRef+":"+recipient,
+		recipient, "invoice-ready-email", map[string]string{
+			"documentRef": item.DocumentRef,
+			"amount":      item.Amount,
+			"currency":    item.Currency,
+		})
 	c.JSON(http.StatusAccepted, gin.H{"status": "queued", "recipient": recipient, "documentRef": item.DocumentRef})
 }
 

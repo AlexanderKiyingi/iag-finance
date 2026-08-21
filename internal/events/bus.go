@@ -6,6 +6,9 @@ import (
 	"context"
 	"errors"
 	"log/slog"
+	"strings"
+
+	"github.com/google/uuid"
 
 	platformevents "github.com/alvor-technologies/iag-platform-go/events"
 )
@@ -130,11 +133,11 @@ func (b *Bus) Publish(ctx context.Context, eventID, eventType string, data map[s
 	}
 }
 
-// PublishNotification emits notification.requested on iag.notifications.
-func (b *Bus) PublishNotification(ctx context.Context, recipient, templateID string, variables map[string]string) {
-	if !b.NotificationsEnabled() || recipient == "" || templateID == "" {
-		return
-	}
+// NotificationEnvelope builds the notification.requested envelope. Split out so
+// the idempotency key can be asserted without a broker: it is the one field
+// whose mistakes are invisible at runtime, because a bad key makes
+// iag-notifications answer "duplicate" and send nothing, successfully.
+func NotificationEnvelope(eventID, recipient, templateID string, variables map[string]string) platformevents.Envelope {
 	vars := map[string]any{}
 	for k, v := range variables {
 		vars[k] = v
@@ -145,7 +148,39 @@ func (b *Bus) PublishNotification(ctx context.Context, recipient, templateID str
 		"templateId": templateID,
 		"variables":  vars,
 	})
-	env.ID = TypeNotificationRequested + ":" + recipient + ":" + templateID
+	if strings.TrimSpace(eventID) != "" {
+		env.ID = eventID
+	}
+	return env
+}
+
+// PublishNotification emits notification.requested on iag.notifications with a
+// fresh idempotency key, so each call is a distinct notification.
+//
+// Prefer PublishNotificationID and pass a key derived from the thing being
+// notified about: that makes a retry of the SAME notification collapse while
+// still letting a genuinely new one through.
+func (b *Bus) PublishNotification(ctx context.Context, recipient, templateID string, variables map[string]string) {
+	b.PublishNotificationID(ctx, uuid.NewString(), recipient, templateID, variables)
+}
+
+// PublishNotificationID emits notification.requested with an explicit event id.
+//
+// That id is the idempotency key: iag-notifications dedups on
+// (eventId, channel, recipient) and answers "duplicate" to a repeat, sending
+// nothing. So the id MUST vary per real-world notification and repeat only for
+// a retry of that same one.
+//
+// This previously derived the id from recipient+template alone, which is
+// constant for a given pair. The first notification of a kind reached someone
+// and every later one was silently discarded as a duplicate: a customer's
+// second invoice email never arrived, and the daily overdue digest sent once
+// and then never again. Nothing errored — dedup is a success path.
+func (b *Bus) PublishNotificationID(ctx context.Context, eventID, recipient, templateID string, variables map[string]string) {
+	if !b.NotificationsEnabled() || recipient == "" || templateID == "" {
+		return
+	}
+	env := NotificationEnvelope(eventID, recipient, templateID, variables)
 	if err := b.notificationProducer.Publish(ctx, b.notificationTopic, recipient, env); err != nil {
 		slog.Warn("finance notification publish failed", "template", templateID, "err", err)
 	}

@@ -75,11 +75,13 @@ func (a *API) applyPayment(c *gin.Context, direction string) {
 		}
 		payment, item = p, ar
 		if req.NotifyEmail != "" && ar != nil && ar.Status == "closed" && a.Events != nil {
-			a.Events.PublishNotification(c.Request.Context(), req.NotifyEmail, "invoice-ready-email", map[string]string{
-				"documentRef": ar.DocumentRef,
-				"amount":      ar.Amount,
-				"currency":    ar.Currency,
-			})
+			a.Events.PublishNotificationID(c.Request.Context(),
+				"invoice-ready:"+ar.DocumentRef+":"+req.NotifyEmail,
+				req.NotifyEmail, "invoice-ready-email", map[string]string{
+					"documentRef": ar.DocumentRef,
+					"amount":      ar.Amount,
+					"currency":    ar.Currency,
+				})
 		}
 		logBusinessEvent(c, a.Audit, auditlog.EventARPayment, "ar_open_item", id.String(), http.StatusCreated, map[string]any{
 			"amount": req.Amount, "paymentRef": paymentRef,

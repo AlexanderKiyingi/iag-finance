@@ -93,10 +93,16 @@ func (w *OverdueNotifier) tick(ctx context.Context) {
 	if href == "" {
 		href = "/api/v1/finance/v1/ar/items"
 	}
-	w.events.PublishNotification(ctx, w.cfg.OverdueNotifyEmail, overdueTemplate, map[string]string{
-		"PaymentCount": strconv.Itoa(len(items)),
-		"Href":         href,
-	})
+	// One digest per address per day. A constant key sent the very first digest
+	// and then suppressed every one after it as a duplicate; a fully random key
+	// would re-send on every tick within the same day. The date is the unit of
+	// work here, so it is the idempotency key.
+	w.events.PublishNotificationID(ctx,
+		"ar-overdue:"+time.Now().UTC().Format("2006-01-02")+":"+w.cfg.OverdueNotifyEmail,
+		w.cfg.OverdueNotifyEmail, overdueTemplate, map[string]string{
+			"PaymentCount": strconv.Itoa(len(items)),
+			"Href":         href,
+		})
 	refs := make([]string, 0, len(items))
 	for _, it := range items {
 		refs = append(refs, it.DocumentRef)
