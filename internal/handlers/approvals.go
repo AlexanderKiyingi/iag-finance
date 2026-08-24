@@ -205,17 +205,17 @@ func (a *API) notifyApprovalOutcome(c *gin.Context, ap *repository.Approval, pro
 
 	// Still mid-chain: tell the desk it is waiting, not the requester.
 	if approved && prog != nil && !prog.Complete {
+		// Addressed to the approvals desk as an audience, so who sits on that
+		// desk is an admin edit rather than a redeploy. APPROVALS_NOTIFY_EMAIL
+		// remains the fallback until the audience is routed.
 		desk := strings.TrimSpace(a.Cfg.ApprovalsNotifyEmail)
-		if desk == "" {
-			return
-		}
 		tier := ""
 		if prog.NextTier != nil {
 			tier = " tier " + strconv.Itoa(*prog.NextTier)
 		}
-		a.Events.PublishNotificationID(ctx,
+		a.Events.PublishNotificationTo(ctx,
 			"approval-pending:"+ap.ID.String()+":"+strconv.Itoa(len(prog.ApprovedTiers)),
-			desk, "approval.pending", map[string]string{
+			"approvals.finance", desk, "approval.pending", map[string]string{
 				"Title": "Approval awaiting" + tier + ": " + what,
 				"Body": what + " (" + amount + ") requested by " + ap.RequestedBy +
 					" has cleared " + strconv.Itoa(len(prog.ApprovedTiers)) + " of " +

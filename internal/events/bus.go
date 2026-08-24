@@ -177,10 +177,25 @@ func (b *Bus) PublishNotification(ctx context.Context, recipient, templateID str
 // second invoice email never arrived, and the daily overdue digest sent once
 // and then never again. Nothing errored — dedup is a success path.
 func (b *Bus) PublishNotificationID(ctx context.Context, eventID, recipient, templateID string, variables map[string]string) {
-	if !b.NotificationsEnabled() || recipient == "" || templateID == "" {
+	b.PublishNotificationTo(ctx, eventID, "", recipient, templateID, variables)
+}
+
+// PublishNotificationTo addresses a logical audience ("approvals.finance")
+// whose recipients an administrator maintains centrally, with recipient as the
+// fallback used until that audience is routed. Prefer it for anything sent to
+// a desk rather than to a specific person: changing who is on the desk then
+// stops being a redeploy of this service.
+func (b *Bus) PublishNotificationTo(ctx context.Context, eventID, audience, recipient, templateID string, variables map[string]string) {
+	if !b.NotificationsEnabled() || templateID == "" {
+		return
+	}
+	if recipient == "" && audience == "" {
 		return
 	}
 	env := NotificationEnvelope(eventID, recipient, templateID, variables)
+	if audience != "" {
+		env.Data["audience"] = audience
+	}
 	if err := b.notificationProducer.Publish(ctx, b.notificationTopic, recipient, env); err != nil {
 		slog.Warn("finance notification publish failed", "template", templateID, "err", err)
 	}
