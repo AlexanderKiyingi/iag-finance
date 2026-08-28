@@ -38,6 +38,9 @@ type API struct {
 	Cfg             config.Config
 	Users           *usersclient.Client
 	Repo            *repository.Repository
+	// Files is nil when object storage is unconfigured; the attachment
+	// endpoints answer 503 rather than the service refusing to start.
+	Files FileStore
 }
 
 func (a *API) Health(c *gin.Context) {

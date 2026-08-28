@@ -1,6 +1,7 @@
 package api
 
 import (
+	"github.com/alvor-technologies/iag-platform-go/objectstore"
 	"log"
 
 	"github.com/alvor-technologies/iag-platform-go/ratelimit"
@@ -87,6 +88,18 @@ func NewRouter(deps RouterDeps) *gin.Engine {
 		Cfg:             deps.Config,
 		Users:           users,
 		Repo:            newConfiguredRepo(deps),
+		// Object storage for attachments. Nil when unconfigured, which the
+		// attachment endpoints report as 503 rather than failing at boot - the
+		// rest of finance does not depend on it.
+		Files: func() handlers.FileStore {
+			if s := objectstore.NewS3Store(deps.Config.S3Endpoint, deps.Config.S3Region,
+				deps.Config.S3Bucket, deps.Config.S3AccessKeyID, deps.Config.S3SecretAccessKey,
+				deps.Config.S3UseSSL); s != nil {
+				return s
+			}
+			// A typed nil would make the interface non-nil and defeat the guard.
+			return nil
+		}(),
 	}
 
 	router.GET("/health", ops.Health)
@@ -119,6 +132,13 @@ func NewRouter(deps RouterDeps) *gin.Engine {
 
 		// Integrations
 		v1.GET("/integrations/ura-efris", ledgerRead, api.URAStatus)
+
+		// Attachments for finance records. Bytes never pass through this
+		// service: create returns a presigned PUT and download a presigned GET,
+		// so the browser talks to the bucket directly.
+		v1.POST("/attachments", middleware.RequireLedgerWrite(), api.PostAttachment)
+		v1.GET("/attachments", ledgerRead, api.ListAttachments)
+		v1.GET("/attachments/:id/url", ledgerRead, api.GetAttachmentURL)
 		w.POST("/integrations/ura-efris/submit", api.SubmitEFRIS)
 
 		// POS ingest — no POS service exists, so the till backend posts here.

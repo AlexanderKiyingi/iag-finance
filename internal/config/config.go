@@ -85,7 +85,16 @@ type Config struct {
 	BankFeedSimulate bool
 
 	// Overdue AR notification cron.
-	OverdueCronEnabled  bool
+	OverdueCronEnabled bool
+	// S3-compatible object storage for finance attachments (bank statements,
+	// supporting documents). Unset means uploads are unavailable rather than
+	// silently written somewhere ephemeral.
+	S3Endpoint          string
+	S3Region            string
+	S3Bucket            string
+	S3AccessKeyID       string
+	S3SecretAccessKey   string
+	S3UseSSL            bool
 	OverdueCronInterval time.Duration
 	OverdueNotifyEmail  string
 	OverdueNotifyHref   string
@@ -214,10 +223,18 @@ func Load() (Config, error) {
 		BankFeedProvider:        getEnv("BANK_FEED_PROVIDER", "stanbic"),
 		BankFeedSimulate:        getEnv("BANK_FEED_SIMULATE", "false") == "true",
 		OverdueCronEnabled:      getEnv("OVERDUE_CRON_ENABLED", overdueCronDefault(env)) == "true",
-		OverdueCronInterval:     overdueCronInterval(),
-		OverdueNotifyEmail:      strings.TrimSpace(os.Getenv("OVERDUE_NOTIFY_EMAIL")),
-		OverdueNotifyHref:       strings.TrimSpace(os.Getenv("OVERDUE_NOTIFY_HREF")),
-		ApprovalsNotifyEmail:    strings.TrimSpace(os.Getenv("APPROVALS_NOTIFY_EMAIL")),
+		S3Endpoint:              getEnv("S3_ENDPOINT", ""),
+		// "auto" matches Cloudflare R2 and the rest of the platform.
+		S3Region:          getEnv("S3_REGION", "auto"),
+		S3Bucket:          getEnv("S3_BUCKET", ""),
+		S3AccessKeyID:     getEnv("S3_ACCESS_KEY_ID", ""),
+		S3SecretAccessKey: getEnv("S3_SECRET_ACCESS_KEY", ""),
+		// Only a literal "false" disables TLS, so a typo fails safe.
+		S3UseSSL:             !strings.EqualFold(getEnv("S3_USE_SSL", "true"), "false"),
+		OverdueCronInterval:  overdueCronInterval(),
+		OverdueNotifyEmail:   strings.TrimSpace(os.Getenv("OVERDUE_NOTIFY_EMAIL")),
+		OverdueNotifyHref:    strings.TrimSpace(os.Getenv("OVERDUE_NOTIFY_HREF")),
+		ApprovalsNotifyEmail: strings.TrimSpace(os.Getenv("APPROVALS_NOTIFY_EMAIL")),
 	}
 
 	return cfg, cfg.validate()
