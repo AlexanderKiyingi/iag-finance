@@ -50,10 +50,16 @@ type BootstrapResponse struct {
 	Permissions PermissionContext `json:"permissions"`
 }
 
+// BuiltinAuthAccounts returns no accounts.
+//
+// It used to hand back three logins with passwords written into the source —
+// finance@iag.africa, kassim@iagcoffee.com and viewer@iag.africa — which
+// SeedAuthAccounts wrote into auth_accounts on an empty database. They were seeded
+// demo credentials, so they went with the rest of the demo data.
+//
+// Authentication for the deployed finance service is the platform's: a Bearer token
+// from iag-authentication with the iag.finance audience. Accounts are created there,
+// never here.
 func BuiltinAuthAccounts() []AuthAccount {
-	return []AuthAccount{
-		{Email: "finance@iag.africa", Password: "Finance123!", Role: "finance_admin", DisplayName: "Finance Team", Entity: "Africa Coffee Park"},
-		{Email: "kassim@iagcoffee.com", Password: "Cfo123!", Role: "finance_manager", DisplayName: "M. Kassim (CFO)", Entity: "Africa Coffee Park"},
-		{Email: "viewer@iag.africa", Password: "Viewer123!", Role: "finance_viewer", DisplayName: "Reports Only", Entity: "Africa Coffee Park"},
-	}
+	return nil
 }
