@@ -61,18 +61,52 @@ type OutboxRow struct {
 	Attempts     int
 }
 
-// FetchUnpublishedOutbox returns the oldest unpublished events, capped at limit.
-func (r *Repository) FetchUnpublishedOutbox(ctx context.Context, limit int) ([]OutboxRow, error) {
+// defaultMaxPublishAttempts bounds outbox retries. At the relay's 5s tick this
+// is a little over eight hours of continuous failure before a row is parked -
+// long enough to ride out a broker restart or a redeploy, short enough that a
+// genuinely undeliverable event stops writing to the database forever.
+const defaultMaxPublishAttempts = 6000
+
+// CountParkedOutbox reports how many unpublished rows have exhausted their
+// attempts, so the relay can say so rather than letting them vanish quietly
+// from the work queue.
+func (r *Repository) CountParkedOutbox(ctx context.Context, maxAttempts int) (int, error) {
+	if maxAttempts <= 0 {
+		maxAttempts = defaultMaxPublishAttempts
+	}
+	var n int
+	err := r.pool.QueryRow(ctx,
+		`SELECT count(*) FROM event_outbox WHERE published_at IS NULL AND attempts >= $1`,
+		maxAttempts).Scan(&n)
+	return n, err
+}
+
+// FetchUnpublishedOutbox returns the oldest unpublished events, capped at limit
+// and skipping any row that has already failed maxAttempts times.
+//
+// The cap exists because retrying was previously unbounded: one row reached
+// 1,042,038 attempts over roughly sixty days against a broker that was not
+// there. That is not persistence, it is a busy loop with a database write on
+// every turn, and it buries the one useful signal - the first error - under a
+// million identical ones.
+//
+// A skipped row is parked, not dropped. It keeps its payload, its attempt count
+// and its last_error, stays visible as unpublished, and resumes the moment
+// someone resets its attempts. Nothing is lost; the retrying stops.
+func (r *Repository) FetchUnpublishedOutbox(ctx context.Context, limit, maxAttempts int) ([]OutboxRow, error) {
 	if limit <= 0 || limit > 500 {
 		limit = 100
+	}
+	if maxAttempts <= 0 {
+		maxAttempts = defaultMaxPublishAttempts
 	}
 	rows, err := r.pool.Query(ctx, `
 		SELECT id, topic, partition_key, event_id, event_type, payload::text, attempts
 		FROM event_outbox
-		WHERE published_at IS NULL
+		WHERE published_at IS NULL AND attempts < $2
 		ORDER BY created_at
 		LIMIT $1
-	`, limit)
+	`, limit, maxAttempts)
 	if err != nil {
 		return nil, err
 	}

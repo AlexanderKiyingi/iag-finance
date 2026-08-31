@@ -10,7 +10,19 @@ import (
 	"github.com/iag-finance/backend/internal/repository"
 )
 
-const outboxBatchSize = 100
+const (
+	outboxBatchSize = 100
+
+	// maxPublishAttempts bounds how many times one event is retried before the
+	// relay parks it. Retrying used to be unbounded, and against a broker that
+	// was not there one row reached 1,042,038 attempts over about sixty days -
+	// a busy loop writing to the database on every turn, burying the first and
+	// only useful error under a million copies of itself.
+	//
+	// At the 5s tick this is roughly eight hours of continuous failure, which
+	// rides out a broker restart or a redeploy but not an indefinite outage.
+	maxPublishAttempts = 6000
+)
 
 // OutboxRelay delivers events recorded in the transactional outbox. It polls for
 // unpublished rows, publishes each via the bus (returning the error so failures
@@ -69,10 +81,16 @@ func (w *OutboxRelay) drainLocked(ctx context.Context) {
 }
 
 func (w *OutboxRelay) drain(ctx context.Context) {
-	rows, err := w.repo.FetchUnpublishedOutbox(ctx, outboxBatchSize)
+	rows, err := w.repo.FetchUnpublishedOutbox(ctx, outboxBatchSize, maxPublishAttempts)
 	if err != nil {
 		slog.Error("outbox fetch failed", "err", err)
 		return
+	}
+	if parked, perr := w.repo.CountParkedOutbox(ctx, maxPublishAttempts); perr == nil && parked > 0 {
+		// Parked rows are no longer fetched, so without this they would leave the
+		// work queue silently - indistinguishable from having been delivered.
+		slog.Warn("outbox events parked after exhausting retries; they are retained and resume if attempts are reset",
+			"count", parked, "max_attempts", maxPublishAttempts)
 	}
 	for _, row := range rows {
 		var payload map[string]any
