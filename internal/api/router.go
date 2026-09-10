@@ -11,6 +11,7 @@ import (
 	"github.com/iag-finance/backend/internal/authclient"
 	"github.com/iag-finance/backend/internal/chainaudit"
 	"github.com/iag-finance/backend/internal/config"
+	"github.com/iag-finance/backend/internal/appkv"
 	"github.com/iag-finance/backend/internal/db"
 	"github.com/iag-finance/backend/internal/events"
 	"github.com/iag-finance/backend/internal/handlers"
@@ -88,6 +89,9 @@ func NewRouter(deps RouterDeps) *gin.Engine {
 		Cfg:             deps.Config,
 		Users:           users,
 		Repo:            newConfiguredRepo(deps),
+		// App-shell store for settings, drafts, push subscriptions and the
+		// shared KV — the surfaces the web app calls that no service owned.
+		AppKV: &appkv.Store{Pool: deps.Pool},
 		// Object storage for attachments. Nil when unconfigured, which the
 		// attachment endpoints report as 503 rather than failing at boot - the
 		// rest of finance does not depend on it.
@@ -162,6 +166,12 @@ func NewRouter(deps RouterDeps) *gin.Engine {
 		w.POST("/ledger/entries", api.CreateJournalEntry)
 		w.POST("/ledger/entries/:id/post", api.PostJournalEntry)
 		w.POST("/ledger/entries/:id/reverse", api.ReverseJournalEntry)
+		// Clear the postings one foreign document previously produced, so an
+		// edited document can book a replacement set instead of a second one.
+		// Deliberately a sibling of /ledger/entries rather than a child: a static
+		// segment beside the existing ":id" wildcard risks a router conflict
+		// panic at startup, and this endpoint is keyed by document, not entry id.
+		w.POST("/ledger/supersede-by-source", api.SupersedeJournalEntriesBySource)
 		w.DELETE("/ledger/entries/:id", api.DeleteJournalEntry)
 		w.POST("/ledger/validate-posting", ops.ValidatePosting)
 		v1.GET("/ledger/periods", ledgerRead, api.ListFiscalPeriods)
@@ -339,9 +349,27 @@ func NewRouter(deps RouterDeps) *gin.Engine {
 		v1.GET("/portal/ap", middleware.RequirePortalAP(), api.PortalAP)
 
 		// Hash-chain ops audit (prototype UI)
+		// The caller's own trail. Not admin-gated: the forced actor filter in
+		// the handler is what authorizes it, so there is nothing to widen.
+		v1.GET("/audit/mine", api.ListOwnAuditLogs)
 		v1.GET("/audit/events", opsRead, ops.ListAudit)
 		v1.GET("/audit/events/verify", opsRead, ops.VerifyAudit)
 		w.POST("/audit/events", ops.AppendAudit)
+		// App-shell store. Two branches because they carry different
+		// authorization: /app/global/* is tenant-wide and gated on
+		// finance.manage_settings, /app/me/* on finance.use_app_store. Both are
+		// additionally scoped by ownership in the handler, and resolveNamespace
+		// refuses a namespace served on the other branch.
+		v1.GET("/app/global/:namespace", ledgerRead, api.ListAppKV)
+		v1.GET("/app/global/:namespace/:key", ledgerRead, api.GetAppKV)
+		w.PUT("/app/global/:namespace/:key", api.PutAppKV)
+		w.DELETE("/app/global/:namespace/:key", api.DeleteAppKV)
+
+		v1.GET("/app/me/:namespace", api.ListAppKV)
+		v1.GET("/app/me/:namespace/:key", api.GetAppKV)
+		w.PUT("/app/me/:namespace/:key", api.PutAppKV)
+		w.DELETE("/app/me/:namespace/:key", api.DeleteAppKV)
+
 		v1.GET("/tables/:tableId/rows", opsRead, ops.ListTableRows)
 		w.POST("/tables/:tableId/rows", ops.AppendTableRow)
 

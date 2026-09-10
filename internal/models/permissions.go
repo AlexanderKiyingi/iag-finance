@@ -38,6 +38,8 @@ func PermissionDescriptors() []PermissionDescriptor {
 		{Name: "finance.submit_efris", Description: "Submit invoices to URA EFRIS (tax authority filing)"},
 		{Name: "finance.ingest_pos", Description: "Post point-of-sale takings into the ledger (machine account for the POS backend)"},
 		{Name: "finance.manage_entities", Description: "Create/manage accounting entities"},
+		{Name: "finance.manage_settings", Description: "Change tenant-wide app settings and request-email routing"},
+		{Name: "finance.use_app_store", Description: "Save your own drafts, preferences and push subscriptions"},
 		{Name: "finance.manage_budgets", Description: "Set budgets"},
 		{Name: "finance.manage_dimensions", Description: "Manage projects and cost centres"},
 		{Name: "finance.issue_invoice", Description: "Create and issue customer invoices and recurring schedules"},

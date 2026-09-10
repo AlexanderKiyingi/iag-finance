@@ -38,3 +38,4 @@ func (g *gatedGroup) handle(method, path string, h gin.HandlerFunc) {
 func (g *gatedGroup) POST(path string, h gin.HandlerFunc)   { g.handle("POST", path, h) }
 func (g *gatedGroup) PATCH(path string, h gin.HandlerFunc)  { g.handle("PATCH", path, h) }
 func (g *gatedGroup) DELETE(path string, h gin.HandlerFunc) { g.handle("DELETE", path, h) }
+func (g *gatedGroup) PUT(path string, h gin.HandlerFunc)    { g.handle("PUT", path, h) }
