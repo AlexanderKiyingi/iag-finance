@@ -363,6 +363,59 @@ func (s *Service) ReverseJournalEntry(ctx context.Context, id uuid.UUID, reason,
 	})
 }
 
+// SupersedeResult reports what happened to a document's previous postings.
+type SupersedeResult struct {
+	Reversed []uuid.UUID `json:"reversed"`
+	Deleted  []uuid.UUID `json:"deleted"`
+}
+
+// SupersedeEntriesBySource clears the postings a foreign document previously
+// produced, so a replacement set can be booked in their place.
+//
+// Drafts are deleted; posted entries are reversed, never deleted, so the audit
+// trail survives. Callers that then create the replacement entries give the
+// document a single current set of postings.
+//
+// This exists because an editing client has no other way to say "these are now
+// this document's lines". Without it, re-sending an edited document's postings
+// simply creates a second set alongside the first, and the general ledger
+// doubles that document — silently, because each individual create succeeded.
+func (s *Service) SupersedeEntriesBySource(
+	ctx context.Context,
+	sourceService, documentRef, reason, actor string,
+) (*SupersedeResult, error) {
+	existing, err := s.repo.ListEntriesBySource(ctx, sourceService, documentRef)
+	if err != nil {
+		return nil, err
+	}
+
+	out := &SupersedeResult{Reversed: []uuid.UUID{}, Deleted: []uuid.UUID{}}
+	for _, entry := range existing {
+		if entry.Status == "draft" {
+			if err := s.repo.DeleteDraftEntry(ctx, entry.ID); err != nil {
+				// A concurrent post can flip draft → posted between the read
+				// and the delete; fall through to reversal rather than fail.
+				if !errors.Is(err, repository.ErrNotDraft) {
+					return nil, err
+				}
+			} else {
+				out.Deleted = append(out.Deleted, entry.ID)
+				continue
+			}
+		}
+		if _, err := s.ReverseJournalEntry(ctx, entry.ID, reason, actor); err != nil {
+			// Already reversed by someone else is not a failure — the goal
+			// state (no live postings for this document) is what matters.
+			if errors.Is(err, repository.ErrNotReversible) {
+				continue
+			}
+			return nil, err
+		}
+		out.Reversed = append(out.Reversed, entry.ID)
+	}
+	return out, nil
+}
+
 // FiscalPeriods lists every period with an explicit open/closed status.
 func (s *Service) FiscalPeriods(ctx context.Context) ([]repository.FiscalPeriod, error) {
 	return s.repo.ListPeriods(ctx)

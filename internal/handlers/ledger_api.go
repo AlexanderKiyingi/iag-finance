@@ -14,6 +14,7 @@ import (
 	"github.com/shopspring/decimal"
 
 	"github.com/alvor-technologies/iag-platform-go/apierr"
+	"github.com/iag-finance/backend/internal/appkv"
 	"github.com/iag-finance/backend/internal/auditlog"
 	"github.com/iag-finance/backend/internal/config"
 	"github.com/iag-finance/backend/internal/domain"
@@ -41,6 +42,9 @@ type API struct {
 	// Files is nil when object storage is unconfigured; the attachment
 	// endpoints answer 503 rather than the service refusing to start.
 	Files FileStore
+	// AppKV backs the app-shell namespaces (settings, drafts, push, kv,
+	// request-email-contacts). Nil when unconfigured, same 503 contract.
+	AppKV *appkv.Store
 }
 
 func (a *API) Health(c *gin.Context) {
@@ -248,6 +252,25 @@ type createJournalRequest struct {
 	Lines       []journalLineRequest `json:"lines" binding:"required,min=2"`
 	// CounterpartyEntityID tags the entry as intercompany for consolidation.
 	CounterpartyEntityID string `json:"counterpartyEntityId"`
+	// AccountingDate is the fiscal date to book the entry to (YYYY-MM-DD).
+	// Empty means today. Without this an external caller could not post a
+	// backdated entry at all: the date it sent was dropped on the floor and
+	// the entry landed in the current period, silently.
+	AccountingDate string `json:"accountingDate"`
+	// DocumentRef records which foreign record this entry came from, and lands
+	// in correlation_id — not source_event_id. The two are different keys:
+	// source_event_id is the bus event this entry consumed and is checked
+	// against processed_events for idempotency, so one document that produces
+	// several entries would have its second entry rejected as a duplicate.
+	// correlation_id is the column that groups entries by their origin, which
+	// is exactly what a document reference is.
+	//
+	// The CreateEntryInput fields have always existed — the internal consumers
+	// (GRIR, invoicing, payroll) populate them — but the HTTP surface had no
+	// way to set them, so entries posted over the API carried no link back to
+	// the document that produced them.
+	DocumentRef   string `json:"documentRef"`
+	SourceService string `json:"sourceService"`
 }
 
 func (a *API) CreateJournalEntry(c *gin.Context) {
@@ -275,11 +298,25 @@ func (a *API) CreateJournalEntry(c *gin.Context) {
 		}
 		counterparty = &id
 	}
+	// A malformed date is rejected rather than quietly defaulted: silently
+	// booking to today is how a backdated entry lands in the wrong period.
+	var accountingDate *time.Time
+	if s := strings.TrimSpace(req.AccountingDate); s != "" {
+		d, err := time.Parse("2006-01-02", s)
+		if err != nil {
+			apierr.JSONStatus(c, http.StatusBadRequest, "accountingDate must be YYYY-MM-DD")
+			return
+		}
+		accountingDate = &d
+	}
 	entry, err := a.Ledger.CreateJournalEntry(c.Request.Context(), ledger.CreateEntryInput{
 		Description:          req.Description,
 		Lines:                lines,
 		CreatedBy:            createdBy,
 		CounterpartyEntityID: counterparty,
+		AccountingDate:       accountingDate,
+		CorrelationID:        optionalTrimmed(req.DocumentRef),
+		SourceService:        optionalTrimmed(req.SourceService),
 	})
 	if err != nil {
 		status := http.StatusBadRequest
@@ -335,6 +372,61 @@ func (a *API) PostJournalEntry(c *gin.Context) {
 // DeleteJournalEntry discards a DRAFT journal entry and its lines. Posted
 // entries are immutable and must be reversed instead (409) so the audit trail
 // is preserved — mirrors how QuickBooks/Zoho allow deleting only unposted drafts.
+type supersedeBySourceRequest struct {
+	// DocumentRef is the foreign document whose postings are being replaced —
+	// the same value sent as createJournalRequest.documentRef.
+	DocumentRef string `json:"documentRef" binding:"required"`
+	// SourceService defaults to the caller's own label when omitted, so a
+	// client cannot accidentally supersede another system's postings.
+	SourceService string `json:"sourceService"`
+	Reason        string `json:"reason"`
+}
+
+// SupersedeJournalEntriesBySource clears a document's existing postings so the
+// caller can book a replacement set.
+//
+// Deliberately not a "replace" that also creates: the caller already knows how
+// to post entries, and combining the two would mean this endpoint owned both
+// balance validation and creation ordering. Splitting it keeps each request one
+// idea, and leaves the caller free to supersede a deleted document without
+// posting anything in its place.
+func (a *API) SupersedeJournalEntriesBySource(c *gin.Context) {
+	var req supersedeBySourceRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		apierr.JSONStatus(c, http.StatusBadRequest, err.Error())
+		return
+	}
+	docRef := strings.TrimSpace(req.DocumentRef)
+	source := strings.TrimSpace(req.SourceService)
+	if source == "" {
+		apierr.JSONStatus(c, http.StatusBadRequest, "sourceService is required — it scopes the supersede to one system's postings")
+		return
+	}
+	reason := strings.TrimSpace(req.Reason)
+	if reason == "" {
+		reason = "superseded by a later version of " + docRef
+	}
+
+	result, err := a.Ledger.SupersedeEntriesBySource(
+		c.Request.Context(), source, docRef, reason, chainActor(c),
+	)
+	if err != nil {
+		apierr.JSONStatus(c, http.StatusInternalServerError, "could not supersede entries for "+docRef)
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"documentRef": docRef,
+		"reversed":    result.Reversed,
+		"deleted":     result.Deleted,
+	})
+	logBusinessEvent(c, a.Audit, auditlog.EventJournalPosted, "journal_entry", docRef, http.StatusOK, map[string]any{
+		"documentRef": docRef,
+		"reversed":    len(result.Reversed),
+		"deleted":     len(result.Deleted),
+	})
+}
+
 func (a *API) DeleteJournalEntry(c *gin.Context) {
 	id, err := uuid.Parse(c.Param("id"))
 	if err != nil {
@@ -469,6 +561,17 @@ func (a *API) ListAPItems(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"items": items})
+}
+
+// optionalTrimmed returns nil for a blank field so an omitted value stays NULL
+// rather than being written as an empty string, which would make "not set" and
+// "set to nothing" indistinguishable in the source columns.
+func optionalTrimmed(s string) *string {
+	t := strings.TrimSpace(s)
+	if t == "" {
+		return nil
+	}
+	return &t
 }
 
 func pagination(c *gin.Context) (int, int) {

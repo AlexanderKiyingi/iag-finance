@@ -54,6 +54,27 @@ func RouteGates() []RouteGate {
 		{"POST", "/ledger/entries", granular("finance.create_journal")},
 		{"POST", "/ledger/entries/:id/post", granular("finance.post_journal")},
 		{"POST", "/ledger/entries/:id/reverse", granular("finance.reverse_journal")},
+		// Superseding a document's postings reverses posted entries, so it is
+		// gated exactly as reversal is. Note Require() is any-of, not all-of:
+		// listing create_journal here as well would *widen* the gate and let a
+		// caller who may only create entries reverse them too.
+		{"POST", "/ledger/supersede-by-source", granular("finance.reverse_journal")},
+		// App-shell: only the tenant-wide branch is gated. The /app/me/*
+		// routes are registered outside the gated group because ownership,
+		// not a permission, is what authorizes them.
+		{"PUT", "/app/global/:namespace/:key", granular("finance.manage_settings")},
+		{"DELETE", "/app/global/:namespace/:key", granular("finance.manage_settings")},
+		// Per-user app data. Ownership scoping in the handler is what stops one
+		// caller reaching another's rows, but the invariant here is that every
+		// mutating route carries a gate regardless — defence in depth, not one or
+		// the other.
+		{"PUT", "/app/me/:namespace/:key", granular("finance.use_app_store")},
+		{"DELETE", "/app/me/:namespace/:key", granular("finance.use_app_store")},
+		// Pre-existing gap, not introduced with the app store: this route has
+		// always enforced RequireLedgerWrite() inline without declaring it, so the
+		// manifest the frontend reads did not list it. Declared to match exactly
+		// what the route already enforces — no behaviour change.
+		{"POST", "/attachments", ledgerWrite()},
 		{"DELETE", "/ledger/entries/:id", granular("finance.create_journal")},
 		{"POST", "/ledger/validate-posting", granular("finance.create_journal")},
 		{"POST", "/ledger/periods/:period/close", granular("finance.close_period")},

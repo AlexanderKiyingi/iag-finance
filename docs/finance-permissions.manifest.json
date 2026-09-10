@@ -94,6 +94,14 @@
       "description": "Create/manage accounting entities"
     },
     {
+      "codename": "finance.manage_settings",
+      "description": "Change tenant-wide app settings and request-email routing"
+    },
+    {
+      "codename": "finance.use_app_store",
+      "description": "Save your own drafts, preferences and push subscriptions"
+    },
+    {
       "codename": "finance.manage_budgets",
       "description": "Set budgets"
     },
@@ -269,6 +277,54 @@
       "permissions": [
         "finance.reverse_journal",
         "finance.change_ledger"
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/ledger/supersede-by-source",
+      "permissions": [
+        "finance.reverse_journal",
+        "finance.change_ledger"
+      ]
+    },
+    {
+      "method": "PUT",
+      "path": "/app/global/:namespace/:key",
+      "permissions": [
+        "finance.manage_settings",
+        "finance.change_ledger"
+      ]
+    },
+    {
+      "method": "DELETE",
+      "path": "/app/global/:namespace/:key",
+      "permissions": [
+        "finance.manage_settings",
+        "finance.change_ledger"
+      ]
+    },
+    {
+      "method": "PUT",
+      "path": "/app/me/:namespace/:key",
+      "permissions": [
+        "finance.use_app_store",
+        "finance.change_ledger"
+      ]
+    },
+    {
+      "method": "DELETE",
+      "path": "/app/me/:namespace/:key",
+      "permissions": [
+        "finance.use_app_store",
+        "finance.change_ledger"
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/attachments",
+      "permissions": [
+        "finance.change_ledger",
+        "finance.change_operations"
       ]
     },
     {

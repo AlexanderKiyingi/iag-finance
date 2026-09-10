@@ -107,6 +107,42 @@ var ErrNotReversible = errors.New("only a posted entry can be reversed")
 // ErrNotDraft is returned when a delete is attempted on a non-draft entry.
 var ErrNotDraft = errors.New("only a draft entry can be deleted")
 
+// SourceEntry identifies one entry produced by a foreign document, and its
+// current status — which decides whether it can be deleted or must be reversed.
+type SourceEntry struct {
+	ID     uuid.UUID
+	Status string
+}
+
+// ListEntriesBySource returns every entry a foreign document produced, newest
+// first, excluding ones already reversed (there is nothing left to undo).
+//
+// The key is (source_service, correlation_id), not source_event_id:
+// correlation_id is where a document reference is recorded, and one document
+// routinely produces several entries. Backed by idx_journal_source_correlation.
+func (r *Repository) ListEntriesBySource(ctx context.Context, sourceService, correlationID string) ([]SourceEntry, error) {
+	rows, err := r.pool.Query(ctx, `
+		SELECT id, status
+		FROM journal_entries
+		WHERE source_service = $1 AND correlation_id = $2 AND status <> 'reversed'
+		ORDER BY created_at DESC
+	`, sourceService, correlationID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var out []SourceEntry
+	for rows.Next() {
+		var e SourceEntry
+		if err := rows.Scan(&e.ID, &e.Status); err != nil {
+			return nil, err
+		}
+		out = append(out, e)
+	}
+	return out, rows.Err()
+}
+
 // DeleteDraftEntry discards a draft journal entry and its lines. Only draft
 // entries may be deleted — a posted entry must be reversed (never deleted) so
 // the audit trail is preserved. Returns ErrEntryNotFound if missing, ErrNotDraft
