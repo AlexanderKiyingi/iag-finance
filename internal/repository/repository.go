@@ -352,8 +352,21 @@ func (r *Repository) CreateJournalEntry(ctx context.Context, p CreateJournalPara
 	return &entry, nil
 }
 
+// journalPageMax bounds one page of the general ledger.
+//
+// Raised from 100 because a client that needs the whole journal — every
+// financial statement does — was forced into ceil(total/100) round trips, and
+// the first of those sits in the web app's boot path. At 100 a 4,000-entry
+// window cost 40 requests; at 1,000 it costs 4.
+//
+// 1,000 is the ceiling already used elsewhere in this package (see
+// ap_orphans.go). It is safe at this size because lines are fetched for the
+// whole page in one query rather than per entry, so a bigger page is one larger
+// response, not more work.
+const journalPageMax = 1000
+
 func (r *Repository) ListJournalEntries(ctx context.Context, limit, offset int) ([]domain.JournalEntry, error) {
-	if limit <= 0 || limit > 100 {
+	if limit <= 0 || limit > journalPageMax {
 		limit = 50
 	}
 	rows, err := r.pool.Query(ctx, `
