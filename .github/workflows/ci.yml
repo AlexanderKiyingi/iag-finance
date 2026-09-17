@@ -56,11 +56,47 @@ jobs:
   docker:
     runs-on: ubuntu-latest
     needs: test
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: iag
+          POSTGRES_PASSWORD: iag_dev
+          POSTGRES_DB: iag_platform
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U iag -d iag_platform"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 5
+
     steps:
       - uses: actions/checkout@v4
 
       - name: Build production image (standalone target)
         run: docker build --target standalone -t iag-finance:ci .
 
-      - name: Verify image healthcheck
-        run: docker run --rm iag-finance:ci wget -qO- http://127.0.0.1:3006/ready
+      # The image is only proven if the server inside it boots, migrates and
+      # answers /ready. The previous step ran `wget` *as* the container command
+      # in place of the server, so nothing listened and it exited 4 every time —
+      # masked for weeks by the test job failing ahead of it.
+      - name: Boot the image against Postgres and hit /ready
+        run: |
+          docker run -d --name finance --network host \
+            -e PORT=3006 -e ENVIRONMENT=staging -e AUDIENCE=iag.finance -e AUTO_MIGRATE=true \
+            -e DATABASE_URL='postgres://iag:iag_dev@127.0.0.1:5432/iag_platform?sslmode=disable&search_path=finance' \
+            iag-finance:ci
+          for i in $(seq 1 30); do
+            if body=$(curl -fsS http://127.0.0.1:3006/ready 2>/dev/null); then
+              echo "$body"
+              echo "$body" | grep -q '"current":true' || { echo "schema not current after boot"; exit 1; }
+              exit 0
+            fi
+            sleep 2
+          done
+          echo "finance did not answer /ready within 60s"; docker logs finance; exit 1
+
+      - name: Container logs
+        if: always()
+        run: docker logs finance 2>&1 | tail -50 || true
