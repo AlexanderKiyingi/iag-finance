@@ -84,7 +84,7 @@ jobs:
       - name: Boot the image against Postgres and hit /ready
         run: |
           docker run -d --name finance --network host \
-            -e PORT=3006 -e ENVIRONMENT=staging -e AUDIENCE=iag.finance -e AUTO_MIGRATE=true \
+            -e PORT=3006 -e ENVIRONMENT=staging -e AUDIENCE=iag.finance -e AUTO_MIGRATE=true -e ENABLE_CONSUMER=false \
             -e DATABASE_URL='postgres://iag:iag_dev@127.0.0.1:5432/iag_platform?sslmode=disable&search_path=finance' \
             iag-finance:ci
           for i in $(seq 1 30); do
