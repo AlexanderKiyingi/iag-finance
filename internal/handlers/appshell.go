@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/gin-gonic/gin"
+	"github.com/jackc/pgx/v5/pgconn"
 
 	"github.com/alvor-technologies/iag-platform-go/apierr"
 	"github.com/iag-finance/backend/internal/appkv"
@@ -32,6 +33,21 @@ func (a *API) appKVUser(c *gin.Context, namespace string) (string, bool) {
 		return "", false
 	}
 	return id.String(), true
+}
+
+// appKVFailure answers a store error. The one cause worth naming is a missing
+// app_kv table — a deployment whose database has not had migration 076
+// applied — because from the outside it is indistinguishable from any other
+// 500, and it took a live probe of all four verbs to work out. Everything else
+// stays an opaque 500 so nothing about the schema leaks to a caller.
+func appKVFailure(c *gin.Context, err error, message string) {
+	var pgErr *pgconn.PgError
+	if errors.As(err, &pgErr) && pgErr.Code == "42P01" { // undefined_table
+		apierr.JSONStatus(c, http.StatusServiceUnavailable,
+			"app store schema is not installed (finance migration 076_app_kv.sql has not been applied to this database)")
+		return
+	}
+	apierr.JSONStatus(c, http.StatusInternalServerError, message)
 }
 
 func (a *API) appKVReady(c *gin.Context) bool {
@@ -81,7 +97,7 @@ func (a *API) ListAppKV(c *gin.Context) {
 	}
 	docs, err := a.AppKV.List(c.Request.Context(), ns, user)
 	if err != nil {
-		apierr.JSONStatus(c, http.StatusInternalServerError, "could not list "+ns)
+		appKVFailure(c, err, "could not list "+ns)
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"items": docs})
@@ -106,7 +122,7 @@ func (a *API) GetAppKV(c *gin.Context) {
 		return
 	}
 	if err != nil {
-		apierr.JSONStatus(c, http.StatusInternalServerError, "could not read "+ns)
+		appKVFailure(c, err, "could not read "+ns)
 		return
 	}
 	c.JSON(http.StatusOK, doc)
@@ -148,7 +164,7 @@ func (a *API) PutAppKV(c *gin.Context) {
 
 	doc, err := a.AppKV.Put(c.Request.Context(), ns, c.Param("key"), body, user, chainActor(c))
 	if err != nil {
-		apierr.JSONStatus(c, http.StatusInternalServerError, "could not save "+ns)
+		appKVFailure(c, err, "could not save "+ns)
 		return
 	}
 	c.JSON(http.StatusOK, doc)
@@ -168,7 +184,7 @@ func (a *API) DeleteAppKV(c *gin.Context) {
 		return
 	}
 	if err := a.AppKV.Delete(c.Request.Context(), ns, c.Param("key"), user); err != nil {
-		apierr.JSONStatus(c, http.StatusInternalServerError, "could not delete from "+ns)
+		appKVFailure(c, err, "could not delete from "+ns)
 		return
 	}
 	c.Status(http.StatusNoContent)

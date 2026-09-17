@@ -150,6 +150,52 @@ func RunMigrations(ctx context.Context, pool *pgxpool.Pool) error {
 	return nil
 }
 
+// PendingMigrations lists the embedded migrations that have not been recorded
+// as applied. Empty means the schema is current.
+//
+// Exposed so readiness can say *which* files a deployment is missing. Without
+// it a service that boots with AUTO_MIGRATE=false, or whose image predates a
+// migration, answers "ready" while every handler that touches the new table
+// 500s with nothing in the response naming the cause.
+func PendingMigrations(ctx context.Context, pool *pgxpool.Pool) ([]string, error) {
+	entries, err := migrationFS.ReadDir("migrations")
+	if err != nil {
+		return nil, fmt.Errorf("read migrations: %w", err)
+	}
+	var files []string
+	for _, e := range entries {
+		if !e.IsDir() && strings.HasSuffix(e.Name(), ".sql") {
+			files = append(files, e.Name())
+		}
+	}
+	sort.Strings(files)
+
+	rows, err := pool.Query(ctx, fmt.Sprintf(`SELECT version FROM %s.%s`, financeSchema, financeMigrationsTable))
+	if err != nil {
+		// No ledger of applied migrations at all: everything is pending.
+		return files, nil
+	}
+	defer rows.Close()
+	applied := map[string]bool{}
+	for rows.Next() {
+		var v string
+		if err := rows.Scan(&v); err != nil {
+			return nil, err
+		}
+		applied[v] = true
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	pending := []string{}
+	for _, name := range files {
+		if !applied[name] {
+			pending = append(pending, name)
+		}
+	}
+	return pending, nil
+}
+
 func RunDemoSeed(ctx context.Context, pool *pgxpool.Pool) error {
 	if demoSeedSQL == "" {
 		return nil
@@ -178,4 +224,9 @@ type PoolHealth struct {
 
 func (p *PoolHealth) Ping(ctx context.Context) error {
 	return p.Pool.Ping(ctx)
+}
+
+// PendingMigrations is PendingMigrations on the health pool.
+func (p *PoolHealth) PendingMigrations(ctx context.Context) ([]string, error) {
+	return PendingMigrations(ctx, p.Pool)
 }

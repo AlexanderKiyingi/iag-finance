@@ -53,12 +53,26 @@ func (h *Handlers) Ready(c *gin.Context) {
 			redisOK = false
 		}
 	}
-	c.JSON(http.StatusOK, gin.H{
+	// Schema currency is reported, not gated on: a deployment running with
+	// AUTO_MIGRATE=false stays in rotation for everything its schema does
+	// serve, but ops can see from this payload exactly which migrations the
+	// database is missing instead of inferring it from 500s on one route.
+	pending, perr := h.DB.PendingMigrations(ctx)
+	body := gin.H{
 		"status":   "ready",
 		"service":  h.Cfg.ServiceName,
 		"postgres": true,
 		"redis":    h.Redis != nil && redisOK,
-	})
+	}
+	switch {
+	case perr != nil:
+		body["schema"] = gin.H{"error": "could not read applied migrations"}
+	case len(pending) > 0:
+		body["schema"] = gin.H{"current": false, "pendingMigrations": pending}
+	default:
+		body["schema"] = gin.H{"current": true}
+	}
+	c.JSON(http.StatusOK, body)
 }
 
 func (h *Handlers) AppendAudit(c *gin.Context) {
